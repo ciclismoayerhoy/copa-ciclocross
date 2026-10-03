@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Copa Ciclocross</title>
+<meta name="theme-color" content="#1b201a">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=Public+Sans:wght@400;500;600;700&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+/* Una columna estrecha tipo hoja de dorsales; la cinta de balizamiento es el único acento */
+:root{
+  --bg:#eceee8; --surface:#f8f9f5; --ink:#1b201a; --muted:#5d6559; --line:#cfd4c9;
+  --tape:#f2c200; --tape-ink:#1b201a; --mud:#6b5a43; --grass:#2f6b3d;
+  --ok:#2f6b3d; --warn:#9a6a00; --bad:#a23b2c;
+  --display:"Big Shoulders Display","Arial Narrow",Impact,sans-serif;
+  --body:"Public Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#141812; --surface:#1c211a; --ink:#e7eae2; --muted:#9aa394; --line:#2f362c;
+  --tape:#f2c200; --tape-ink:#141812; --mud:#b39a77; --grass:#6fbf80;
+  --ok:#6fbf80; --warn:#e2b04a; --bad:#e07a68; color-scheme:dark}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5;
+  padding:0 16px;padding-block:env(safe-area-inset-top,0px) calc(48px + env(safe-area-inset-bottom,0px))}
+.wrap{max-width:720px;margin:0 auto}
+[hidden]{display:none!important}
+header{padding-block:22px 6px}
+.tape{height:10px;background:repeating-linear-gradient(-45deg,var(--tape) 0 14px,var(--tape-ink) 14px 28px);border-radius:2px;margin-bottom:16px}
+.top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+h1{font-family:var(--display);font-weight:800;font-size:clamp(2.2rem,8vw,3.2rem);line-height:.95;letter-spacing:.01em;text-transform:uppercase;margin:0}
+.sub{color:var(--muted);margin:6px 0 0}
+.userbox{font-size:13px;color:var(--muted);text-align:right}
+.userbox strong{color:var(--ink)}
+nav{display:flex;gap:6px;margin:18px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+nav button{font:600 14px var(--body);background:none;border:0;color:var(--muted);padding:10px 12px;border-bottom:3px solid transparent;cursor:pointer}
+nav button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--tape)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--grass);outline-offset:2px}
+.stack{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:16px}
+.race-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.race-name{font-family:var(--display);font-weight:800;font-size:1.6rem;line-height:1;text-transform:uppercase;margin:0}
+.meta{color:var(--muted);font-size:13px;margin-top:4px}
+.chip{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:3px 8px;border-radius:3px;border:1px solid currentColor;white-space:nowrap}
+.chip.open{color:var(--ok)} .chip.closed{color:var(--warn)} .chip.done{color:var(--muted)}
+.cls{font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--mud);border:1px solid var(--line);border-radius:3px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+.cats{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+@media (max-width:560px){.cats{grid-template-columns:1fr}}
+.cat{min-width:0}
+.cat h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.pos{display:grid;grid-template-columns:92px 1fr;align-items:center;gap:8px;margin-bottom:6px}
+.pos label{font-size:12px;font-weight:700;color:var(--muted)}
+.pos label.win{color:var(--ink)}
+input[type=text],input[type=email],input[type=password],input[type=datetime-local],select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px 10px;width:100%;min-width:0}
+textarea{min-height:70px;resize:vertical;font-size:13px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.btn{font:700 14px var(--body);background:var(--tape);color:var(--tape-ink);border:0;border-radius:4px;padding:9px 16px;cursor:pointer}
+.btn.ghost{background:none;color:var(--ink);border:1px solid var(--line)}
+.btn.small{padding:4px 10px;font-size:12px}
+.btn:disabled{opacity:.5;cursor:default}
+.note{font-size:13px;color:var(--muted)}
+.note.ok{color:var(--ok)} .note.err{color:var(--bad)}
+.lst{list-style:none;padding:0;margin:0;font-size:14px}
+.lst li{display:flex;gap:8px;align-items:baseline;padding:2px 0}
+.lst .tag{font-size:11px;font-weight:700;color:var(--muted);width:62px;flex:none;text-transform:uppercase;letter-spacing:.04em}
+.lst .nm{flex:1;min-width:0}
+.lst .r{font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px;white-space:nowrap}
+.hit{color:var(--ok);font-weight:700}
+.pts{font-family:var(--display);font-weight:800;font-size:1.4rem;font-variant-numeric:tabular-nums}
+details{margin-top:12px} summary{cursor:pointer;font-weight:600;font-size:14px}
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+td.num,th.num{text-align:right}
+td.rank{font-family:var(--display);font-weight:800;font-size:1.2rem;width:36px}
+tr.me td{background:color-mix(in srgb,var(--tape) 18%,transparent)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden;margin-bottom:14px}
+.seg button{font:600 13px var(--body);background:none;border:0;padding:8px 12px;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.banner{background:var(--surface);border:1px dashed var(--mud);border-radius:6px;padding:14px 16px}
+.empty{color:var(--muted);text-align:center;padding:28px 12px}
+.rules{font-size:13px;color:var(--muted);margin-top:20px}
+.auth{max-width:420px}
+.field{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.field label{font-size:13px;font-weight:600}
+.admrow{display:grid;grid-template-columns:1fr 190px 90px auto;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.admrow:last-child{border-bottom:0}
+@media (max-width:640px){.admrow{grid-template-columns:1fr 1fr}.admrow .nmcol{grid-column:1/-1}}
+h2.sec{font-size:13px;margin:6px 0 0;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="tape" aria-hidden="true"></div>
+    <div class="top">
+      <div>
+        <h1>Copa Ciclocross</h1>
+        <p class="sub">Elige ganador, 2ª y 3ª elección en élite masculina y femenina.</p>
+      </div>
+      <div class="userbox" id="userbox"></div>
+    </div>
+  </header>
+
+  <main id="app"><div class="empty">Cargando…</div></main>
+
+  <p class="rules" id="rules"></p>
+  <datalist id="dl-h"></datalist>
+  <datalist id="dl-m"></datalist>
+</div>
+
+<script>
+// =====================================================================
+// CONFIGURACIÓN: pega aquí los datos de tu proyecto de Supabase
+// (Supabase > Project Settings > API: "Project URL" y la clave "anon public")
+// =====================================================================
+const SUPABASE_URL = "https://qvmdetlprlnfjqshwsou.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_Qmj-8kEz7SroCVmXyI61VQ_-JT241lH";
+
+// Tu Excel de Google Drive (debe estar compartido: cualquiera con el enlace puede ver)
+const SHEET_ID = "1B_663eOb7utnCpj3_7JvCKUVU3FVGCCT";
+const TABS = { carreras: "Carreras", corredores: "Corredores", h: "Históricos H 26-27", m: "Históricos M 26-27" };
+const SEASON = "2026-27";
+const WINNER_BONUS = 0.10;   // +10 % si tu elección de ganador gana
+// =====================================================================
+
+const CATS = [{k:"h", label:"Élite masculina", dl:"dl-h"}, {k:"m", label:"Élite femenina", dl:"dl-m"}];
+const SLOTS = ["Ganador","2ª elección","3ª elección"];
+const CLASSES = ["CDM","CM","CE","C1","C2"];
+
+document.getElementById("rules").textContent =
+  "Cada corredor que eliges suma los puntos UCI de la posición en la que acaba. Si tu elección de ganador gana, sus puntos llevan un +10 %. " +
+  "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. " +
+  "Para entrar en la clasificación de % de ganadores hay que haber jugado al menos la mitad de las carreras disputadas.";
+
+const configured = !SUPABASE_URL.startsWith("PEGA");
+const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const S = {
+  session:null, profile:null, profiles:{}, races:[], picks:[], scales:{},
+  riders:{h:[], m:[]}, riderSet:{h:new Set(), m:new Set()},
+  results:{},            // raceId -> {h: Map(oficial->pos), m: Map, hRows:[], mRows:[]}
+  unmatched:[], sheetErrors:[], tab:"carreras", clasif:"copa", authMode:"login",
+  openDetails:new Set(), loaded:false
+};
+
+// ---------- utilidades ----------
+const norm = s => (s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/\s+/g," ").trim();
+const fmtDT = iso => iso ? new Date(iso).toLocaleString("es-ES",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "";
+const fmtDay = ymd => ymd ? new Date(ymd+"T12:00:00").toLocaleDateString("es-ES",{weekday:"long",day:"numeric",month:"long"}) : "";
+const toLocalInput = iso => { if(!iso) return ""; const d=new Date(iso); const p=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const round1 = x => Math.round(x*10)/10;
+const fmtPts = x => (Math.round(x*10)/10).toLocaleString("es-ES");
+function h(tag, attrs={}, ...kids){
+  const el=document.createElement(tag);
+  for(const [k,v] of Object.entries(attrs||{})){
+    if(v==null||v===false) continue;
+    if(k==="class") el.className=v; else if(k==="text") el.textContent=v;
+    else if(k.startsWith("on")) el.addEventListener(k.slice(2),v);
+    else el.setAttribute(k, v===true?"":v);
+  }
+  for(const kid of kids.flat()){ if(kid==null||kid===false) continue; el.append(kid.nodeType?kid:document.createTextNode(String(kid))); }
+  return el;
+}
+
+// ---------- lectura del Excel (Google Visualization, JSONP) ----------
+let jsonpN=0;
+function readTab(tab){
+  return new Promise((resolve,reject)=>{
+    const cb="__gviz"+(++jsonpN);
+    const s=document.createElement("script");
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error("timeout")); },20000);
+    function cleanup(){ clearTimeout(timer); delete window[cb]; s.remove(); }
+    window[cb]=resp=>{ cleanup();
+      if(resp.status==="error"){ reject(new Error(resp.errors?.[0]?.detailed_message||"error")); return; }
+      const cols=resp.table.cols.map(c=>(c.label||"").trim());
+      const rows=resp.table.rows.map(r=>(r.c||[]).map(c=>{ if(!c) return ""; const v=(c.f!=null && typeof c.v!=="string")?c.f:c.v; return v==null?"":String(v).trim(); }));
+      resolve({cols, rows});
+    };
+    s.src=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json;responseHandler:${cb}&headers=1&sheet=${encodeURIComponent(tab)}&_=${Date.now()}`;
+    s.onerror=()=>{ cleanup(); reject(new Error("network")); };
+    document.head.append(s);
+  });
+}
+const colIdx = (cols, re, fallback) => { const i=cols.findIndex(c=>re.test(c)); return i>=0?i:fallback; };
+
+async function loadSheet(){
+  S.sheetErrors=[];
+  const [cor, rh, rm] = await Promise.allSettled([readTab(TABS.corredores), readTab(TABS.h), readTab(TABS.m)]);
+  // Corredores
+  if(cor.status==="fulfilled" && cor.value.cols.some(c=>/oficial/i.test(c)) && cor.value.cols.some(c=>/categor/i.test(c))){
+    const {cols,rows}=cor.value; const io=colIdx(cols,/oficial/i,1), ic=colIdx(cols,/categor/i,2);
+    const sets={h:new Set(), m:new Set()};
+    for(const r of rows){ const n=r[io], c=(r[ic]||"").toUpperCase(); if(!n) continue; if(c.startsWith("H")) sets.h.add(n); else if(c.startsWith("M")) sets.m.add(n); }
+    S.riders={h:[...sets.h].sort((a,b)=>a.localeCompare(b)), m:[...sets.m].sort((a,b)=>a.localeCompare(b))};
+    S.riderSet={h:new Set(S.riders.h.map(norm)), m:new Set(S.riders.m.map(norm))};
+  } else S.sheetErrors.push(`No he podido leer la pestaña "${TABS.corredores}".`);
+  // Resultados
+  S.results={}; S.unmatched=[];
+  for(const [k,res] of [["h",rh],["m",rm]]){
+    if(res.status!=="fulfilled" || !res.value.cols.some(c=>/ID_Carrera/i.test(c))){ S.sheetErrors.push(`No encuentro la pestaña de resultados "${TABS[k]}". Revisa que el nombre coincide exactamente.`); continue; }
+    const {cols,rows}=res.value;
+    const ip=colIdx(cols,/^posici/i,0), iw=colIdx(cols,/corredor/i,1), ir=colIdx(cols,/ID_Carrera/i,5), io=colIdx(cols,/oficial/i,6);
+    for(const r of rows){
+      const race=r[ir]; if(!race) continue;
+      const pos=parseInt(r[ip],10); const official=r[io]; const web=r[iw];
+      const R = S.results[race] ||= {h:new Map(), m:new Map(), hRows:[], mRows:[]};
+      R[k+"Rows"].push({pos:isNaN(pos)?null:pos, label:r[ip], name: (official && !/sin equivalencia/i.test(official)) ? official : web});
+      if(!official || /sin equivalencia/i.test(official)){ if(web) S.unmatched.push({race, cat:k, name:web}); continue; }
+      if(!isNaN(pos) && !R[k].has(norm(official))) R[k].set(norm(official), pos);
+    }
+  }
+  for(const R of Object.values(S.results)) for(const k of ["h","m"]) R[k+"Rows"].sort((a,b)=>(a.pos??9999)-(b.pos??9999));
+}
+
+// ---------- puntuación ----------
+const hasResult = raceId => { const R=S.results[raceId]; return !!R && (R.h.size>0 || R.m.size>0); };
+const scaleFor = cls => S.scales[cls] || [];
+function riderPoints(name, cat, race){
+  const R=S.results[race.id]; if(!R||!name) return {pos:null, pts:0};
+  const pos=R[cat].get(norm(name)); if(!pos) return {pos:null, pts:0};
+  return {pos, pts: scaleFor(race.uci_class)[pos-1] || 0};
+}
+function pickScore(p, race){
+  let total=0; const detail={h:[],m:[]};
+  for(const c of CATS){
+    (p[c.k]||[]).forEach((name,i)=>{
+      const r=riderPoints(name,c.k,race); let pts=r.pts;
+      const bonus = (i===0 && r.pos===1) ? pts*WINNER_BONUS : 0;
+      total+=pts+bonus; detail[c.k][i]={name, pos:r.pos, pts:round1(pts+bonus), bonus:bonus>0};
+    });
+  }
+  return {total:round1(total), detail};
+}
+const played = p => p && CATS.some(c=>(p[c.k]||[]).some(x=>norm(x)));
+const pickOf = (uid, raceId) => S.picks.find(p=>p.user_id===uid && p.race_id===raceId) || null;
+const isOpen = r => r.active && r.deadline && Date.now() < new Date(r.deadline).getTime();
+
+function standings(){
+  const done=S.races.filter(r=>r.active && hasResult(r.id));
+  const minRaces=Math.ceil(done.length/2);
+  const rows=Object.values(S.profiles).map(pr=>{
+    let pts=0,n=0,hit=0,att=0;
+    for(const r of done){
+      const p=pickOf(pr.id,r.id); if(!played(p)) continue;
+      n++; pts+=pickScore(p,r).total;
+      for(const c of CATS){ const g=(p[c.k]||[])[0]; const R=S.results[r.id];
+        if(g && R[c.k].size){ att++; if(R[c.k].get(norm(g))===1) hit++; } }
+    }
+    return {uid:pr.id, name:pr.alias, pts:round1(pts), n, hit, att, pct:att?hit/att:0};
+  });
+  return {done, minRaces, rows};
+}
+
+// ---------- carga de datos ----------
+async function loadDb(){
+  const [pr, ra, pk, st] = await Promise.all([
+    sb.from("profiles").select("id,alias,is_admin"),
+    sb.from("races").select("*").order("race_date"),
+    sb.from("picks").select("*"),
+    sb.from("settings").select("*").eq("key","uci_scales").maybeSingle()
+  ]);
+  if(pr.error||ra.error||pk.error) throw (pr.error||ra.error||pk.error);
+  S.profiles=Object.fromEntries(pr.data.map(p=>[p.id,p]));
+  S.profile=S.profiles[S.session.user.id]||null;
+  S.races=ra.data; S.picks=pk.data; S.scales=st.data?.value||{};
+}
+async function refresh(){
+  try{ await Promise.all([loadDb(), loadSheet()]); }
+  catch(e){ console.error(e); S.sheetErrors.push("Error al cargar los datos: "+(e.message||e)); }
+  S.loaded=true; render();
+}
+
+// ---------- render ----------
+const dirty={};
+document.addEventListener("input",e=>{ if(e.target.id) dirty[e.target.id]=e.target.value; });
+const clearDirty=prefix=>{ for(const k of Object.keys(dirty)) if(k.startsWith(prefix)) delete dirty[k]; };
+
+function render(){
+  const f=document.activeElement, fid=f?.id;
+  paint();
+  for(const [id,v] of Object.entries(dirty)){ const el=document.getElementById(id); if(el && "value" in el && el.type!=="checkbox") el.value=v; }
+  if(fid){ const el=document.getElementById(fid); if(el && el!==document.activeElement) el.focus(); }
+}
+
+function paint(){
+  for(const [id,list] of [["dl-h",S.riders.h],["dl-m",S.riders.m]]) document.getElementById(id).replaceChildren(...list.map(n=>h("option",{value:n})));
+  const app=document.getElementById("app"); app.replaceChildren();
+  const ub=document.getElementById("userbox"); ub.replaceChildren();
+  if(!configured){ app.append(h("div",{class:"banner"},"Falta configurar la conexión con Supabase. Sigue los pasos del archivo README.")); return; }
+  if(!S.session){ app.append(authView()); return; }
+  if(!S.loaded){ app.append(h("div",{class:"empty"},"Cargando carreras y resultados…")); return; }
+  ub.append("Juegas como ", h("strong",{text:S.profile?.alias||"…"}), h("br"),
+    h("button",{class:"btn ghost small",onclick:async()=>{ await sb.auth.signOut(); }},"Salir"));
+
+  const tabs=[["carreras","Carreras"],["clasif","Clasificaciones"]];
+  if(S.profile?.is_admin) tabs.push(["admin","Organizar"]);
+  if(!tabs.some(t=>t[0]===S.tab)) S.tab="carreras";
+  app.append(h("nav",{role:"tablist"}, tabs.map(([k,l])=>h("button",{role:"tab","aria-selected":String(S.tab===k),onclick:()=>{S.tab=k;try{localStorage.setItem("cc-tab",k);}catch(e){} render();}},l))));
+  if(S.sheetErrors.length && S.profile?.is_admin) app.append(h("div",{class:"banner",style:"margin-bottom:14px"}, S.sheetErrors.map(e=>h("div",{class:"note err",text:e}))));
+  const sec=h("section",{class:"stack"}); app.append(sec);
+  if(S.tab==="carreras") renderRaces(sec);
+  if(S.tab==="clasif") renderClasif(sec);
+  if(S.tab==="admin") renderAdmin(sec);
+}
+
+function authView(){
+  const reg=S.authMode==="register";
+  const msg=h("p",{class:"note",id:"auth-msg"});
+  const form=h("form",{class:"card auth",onsubmit:async e=>{
+    e.preventDefault();
+    const email=form.querySelector("#a-email").value.trim(), pass=form.querySelector("#a-pass").value;
+    const btn=form.querySelector("button[type=submit]"); btn.disabled=true; msg.className="note"; msg.textContent="Un momento…";
+    try{
+      if(reg){
+        const alias=form.querySelector("#a-alias").value.trim();
+        if(alias.length<2){ throw new Error("El nombre debe tener al menos 2 letras."); }
+        const {data:taken}=await sb.from("profiles").select("id").ilike("alias",alias).limit(1);
+        if(taken?.length) throw new Error("Ese nombre ya lo usa otro jugador. Elige otro.");
+        const {data,error}=await sb.auth.signUp({email,password:pass,options:{data:{alias}}});
+        if(error) throw error;
+        if(!data.session){ msg.className="note ok"; msg.textContent="Te hemos enviado un email para confirmar la cuenta. Después vuelve y entra."; btn.disabled=false; return; }
+      } else {
+        const {error}=await sb.auth.signInWithPassword({email,password:pass});
+        if(error) throw error;
+      }
+    }catch(err){
+      msg.className="note err";
+      const m=err.message||"";
+      msg.textContent = /invalid login/i.test(m) ? "Email o contraseña incorrectos." :
+        /already registered/i.test(m) ? "Ya hay una cuenta con ese email. Entra con tu contraseña." :
+        /password/i.test(m) && /6/.test(m) ? "La contraseña debe tener al menos 6 caracteres." : m || "No se ha podido completar.";
+      btn.disabled=false;
+    }
+  }},
+    h("h2",{class:"race-name",style:"font-size:1.5rem"}, reg?"Crear cuenta":"Entrar"),
+    reg ? h("div",{class:"field"}, h("label",{for:"a-alias"},"Tu nombre en la Copa"), h("input",{type:"text",id:"a-alias",maxlength:"30",required:true,autocomplete:"nickname"})) : null,
+    h("div",{class:"field"}, h("label",{for:"a-email"},"Email"), h("input",{type:"email",id:"a-email",required:true,autocomplete:"email"})),
+    h("div",{class:"field"}, h("label",{for:"a-pass"},"Contraseña"), h("input",{type:"password",id:"a-pass",required:true,minlength:"6",autocomplete:reg?"new-password":"current-password"})),
+    h("div",{class:"row"}, h("button",{class:"btn",type:"submit"}, reg?"Crear cuenta":"Entrar"),
+      h("button",{class:"btn ghost",type:"button",onclick:()=>{S.authMode=reg?"login":"register";render();}}, reg?"Ya tengo cuenta":"Crear cuenta nueva")),
+    msg);
+  return form;
+}
+
+function raceMeta(r){
+  return [r.race_date?fmtDay(r.race_date):null, r.deadline?(isOpen(r)?"Cierra ":"Cerró ")+fmtDT(r.deadline):null].filter(Boolean).join(" · ");
+}
+
+function renderRaces(box){
+  const races=S.races.filter(r=>r.active);
+  if(!races.length){ box.append(h("div",{class:"card empty"},"Todavía no hay carreras.")); return; }
+  const upcoming=races.filter(r=>!hasResult(r.id)).sort((a,b)=>(a.deadline||"").localeCompare(b.deadline||""));
+  const past=races.filter(r=>hasResult(r.id)).sort((a,b)=>b.race_date.localeCompare(a.race_date));
+  const open=upcoming.filter(isOpen), pending=upcoming.filter(r=>!isOpen(r));
+  if(pending.length){ box.append(h("h2",{class:"sec"},"Cerradas, esperando resultado")); pending.forEach(r=>box.append(raceCard(r))); }
+  if(open.length){
+    box.append(h("h2",{class:"sec"},"Abiertas"));
+    open.slice(0,4).forEach(r=>box.append(raceCard(r)));
+    if(open.length>4){
+      const rest=h("details",{open:S.openDetails.has("__more"),ontoggle:e=>{e.currentTarget.open?S.openDetails.add("__more"):S.openDetails.delete("__more");}},
+        h("summary",{},`Ver las ${open.length-4} carreras siguientes`), h("div",{class:"stack",style:"margin-top:12px"}, open.slice(4).map(raceCard)));
+      box.append(rest);
+    }
+  }
+  if(past.length){ box.append(h("h2",{class:"sec"},"Disputadas")); past.forEach(r=>box.append(raceCard(r))); }
+}
+
+function raceCard(r){
+  const open=isOpen(r), done=hasResult(r.id);
+  const chip = done ? h("span",{class:"chip done"},"Resultado") : open ? h("span",{class:"chip open"},"Abierta") : h("span",{class:"chip closed"},"Cerrada");
+  const card=h("article",{class:"card"},
+    h("div",{class:"race-head"},
+      h("div",{style:"min-width:0"}, h("h3",{class:"race-name"}, r.name, h("span",{class:"cls"},r.uci_class)), h("div",{class:"meta"},raceMeta(r))),
+      chip));
+  const mine=pickOf(S.session.user.id, r.id);
+
+  if(open){
+    const ids={};
+    card.append(h("div",{class:"cats"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label),
+      SLOTS.map((slot,i)=>{ const id=`p-${r.id}-${c.k}-${i}`.replace(/[^\w-]/g,"_"); ids[c.k+i]=id;
+        return h("div",{class:"pos"}, h("label",{for:id,class:i===0?"win":null},slot),
+          h("input",{type:"text",id,list:c.dl,autocomplete:"off",placeholder:"Escribe y elige",value:(mine?.[c.k]||[])[i]||""})); })))));
+    const msg=h("span",{class:"note"}, mine ? `Guardado ${fmtDT(mine.updated_at)}` : "Sin pronóstico todavía");
+    const btn=h("button",{class:"btn",onclick:async()=>{
+      msg.className="note err";
+      if(!isOpen(r)){ msg.textContent="Esta carrera ya está cerrada."; render(); return; }
+      const entry={};
+      for(const c of CATS){
+        const vals=SLOTS.map((_,i)=>document.getElementById(ids[c.k+i]).value.trim());
+        for(const v of vals) if(v && S.riderSet[c.k].size && !S.riderSet[c.k].has(norm(v))){ msg.textContent=`"${v}" no está en la lista de ${c.label.toLowerCase()}. Elígelo de las sugerencias.`; return; }
+        const filled=vals.filter(Boolean).map(norm);
+        if(new Set(filled).size!==filled.length){ msg.textContent=`Has repetido un corredor en ${c.label.toLowerCase()}.`; return; }
+        // guarda con el nombre oficial exacto de la lista
+        entry[c.k]=vals.map(v=>v ? (S.riders[c.k].find(n=>norm(n)===norm(v))||v) : "");
+      }
+      if(!played(entry)){ msg.textContent="Rellena al menos una elección."; return; }
+      btn.disabled=true; msg.className="note"; msg.textContent="Guardando…";
+      const row={user_id:S.session.user.id, race_id:r.id, h:entry.h, m:entry.m, updated_at:new Date().toISOString()};
+      const {error}=await sb.from("picks").upsert(row);
+      btn.disabled=false;
+      if(error){ msg.className="note err"; msg.textContent = /row-level/i.test(error.message) ? "La carrera ya ha cerrado; no se ha guardado." : "No se pudo guardar. Inténtalo de nuevo."; return; }
+      S.picks=S.picks.filter(p=>!(p.user_id===row.user_id && p.race_id===r.id)).concat(row);
+      clearDirty(`p-${r.id}`.replace(/[^\w-]/g,"_"));
+      msg.className="note ok"; msg.textContent="Guardado. Puedes cambiarlo hasta el cierre.";
+    }}, mine?"Actualizar pronóstico":"Guardar pronóstico");
+    card.append(h("div",{class:"row"}, btn, msg));
+    return card;
+  }
+
+  // Cerrada
+  if(mine && played(mine)) card.append(myPicks(mine, r));
+  else card.append(h("p",{class:"note",style:"margin:12px 0 0"},"No hiciste pronóstico en esta carrera."));
+  if(done){
+    const R=S.results[r.id];
+    card.append(h("div",{class:"cats"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label+" · podio"),
+      h("ol",{class:"lst"}, R[c.k+"Rows"].filter(x=>x.pos && x.pos<=3).map(x=>h("li",{}, h("span",{class:"tag"},x.pos+"º"), h("span",{class:"nm",text:x.name}),
+        h("span",{class:"r"}, `${scaleFor(r.uci_class)[x.pos-1]||0} pts`))))))));
+  }
+  const others=S.picks.filter(p=>p.race_id===r.id && played(p));
+  if(others.length){
+    const rows=others.map(p=>({p, s:pickScore(p,r), name:S.profiles[p.user_id]?.alias||"?"})).sort((a,b)=>b.s.total-a.s.total||a.name.localeCompare(b.name));
+    card.append(h("details",{open:S.openDetails.has(r.id),ontoggle:e=>{e.currentTarget.open?S.openDetails.add(r.id):S.openDetails.delete(r.id);}},
+      h("summary",{},`Pronósticos de todos (${others.length})`),
+      h("div",{class:"tablewrap"}, h("table",{},
+        h("thead",{},h("tr",{},h("th",{},"Jugador"),...CATS.map(c=>h("th",{},c.label)),done?h("th",{class:"num"},"Pts"):null)),
+        h("tbody",{}, rows.map(x=>h("tr",{class:x.p.user_id===S.session.user.id?"me":null}, h("td",{text:x.name}),
+          ...CATS.map(c=>h("td",{style:"font-size:13px"}, (x.p[c.k]||[]).flatMap((n,i)=>{ const d=x.s.detail[c.k][i];
+            const t=(n||"—")+(done&&n&&d?.pos?` (${d.pos}º)`:""); const el=h("span",{class:d?.bonus?"hit":null,text:t}); return i?[h("br"),el]:[el]; }))),
+          done?h("td",{class:"num pts"},fmtPts(x.s.total)):null)))))));
+  }
+  return card;
+}
+
+function myPicks(p, r){
+  const done=hasResult(r.id); const s=pickScore(p,r);
+  return h("div",{style:"margin-top:14px"},
+    h("div",{class:"race-head"}, h("strong",{},"Tu pronóstico"), done?h("span",{class:"pts"},`${fmtPts(s.total)} pts`):null),
+    h("div",{class:"cats",style:"margin-top:8px"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label),
+      h("ul",{class:"lst"}, SLOTS.map((slot,i)=>{ const n=(p[c.k]||[])[i]; const d=s.detail[c.k][i];
+        return h("li",{}, h("span",{class:"tag"},i===0?"Ganador":`${i+1}ª elec.`), h("span",{class:"nm "+(d?.bonus?"hit":""),text:n||"—"}),
+          done&&n ? h("span",{class:"r"}, d?.pos ? `${d.pos}º · ${fmtPts(d.pts)} pts${d.bonus?" (+10 %)":""}` : "sin puntos") : null); }))))));
+}
+
+function renderClasif(box){
+  const {done,minRaces,rows}=standings();
+  box.append(h("div",{class:"seg",role:"group","aria-label":"Clasificación"},
+    h("button",{"aria-pressed":String(S.clasif==="copa"),onclick:()=>{S.clasif="copa";render();}},"Copa Ciclocross"),
+    h("button",{"aria-pressed":String(S.clasif==="pct"),onclick:()=>{S.clasif="pct";render();}},"% de ganadores")));
+  if(!done.length){ box.append(h("div",{class:"card empty"},"La clasificación aparecerá con los resultados de la primera carrera.")); return; }
+  box.append(h("p",{class:"note",style:"margin:0"}, `${done.length} ${done.length===1?"carrera disputada":"carreras disputadas"}`));
+  if(S.clasif==="copa"){
+    const list=rows.filter(x=>x.n>0).sort((a,b)=>b.pts-a.pts||a.name.localeCompare(b.name));
+    box.append(table(["","Jugador",{t:"Carreras",num:1},{t:"Puntos",num:1}], list, x=>x.pts, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num pts"},fmtPts(x.pts))]));
+  } else {
+    box.append(h("p",{class:"note",style:"margin:0"}, `Mínimo para entrar: ${minRaces} ${minRaces===1?"carrera jugada":"carreras jugadas"} (la mitad de las disputadas).`));
+    const ok=x=>x.n>=minRaces && x.att>0;
+    const qual=rows.filter(ok).sort((a,b)=>b.pct-a.pct||b.hit-a.hit||a.name.localeCompare(b.name));
+    const out=rows.filter(x=>x.n>0 && !ok(x)).sort((a,b)=>b.n-a.n||a.name.localeCompare(b.name));
+    const cols=["","Jugador",{t:"Carreras",num:1},{t:"Aciertos",num:1},{t:"%",num:1}];
+    box.append(table(cols, qual, x=>x.pct, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num pts"},Math.round(x.pct*100)+"%")]));
+    if(out.length){ box.append(h("h2",{class:"sec"},"Aún sin el mínimo de carreras"));
+      box.append(table(cols, out, null, x=>[h("td",{class:"rank"},"–"),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num"},x.att?Math.round(x.pct*100)+"%":"—")])); }
+  }
+}
+function table(cols, list, keyFn, rowFn){
+  if(!list.length) return h("div",{class:"card empty"},"Nadie en esta clasificación todavía.");
+  let rank=0, prev;
+  return h("div",{class:"card tablewrap",style:"padding:4px 8px"}, h("table",{},
+    h("thead",{},h("tr",{},cols.map(c=>typeof c==="string"?h("th",{},c):h("th",{class:c.num?"num":null},c.t)))),
+    h("tbody",{}, list.map((x,i)=>{ const k=keyFn?keyFn(x):i; if(k!==prev) rank=i+1; prev=k;
+      return h("tr",{class:x.uid===S.session.user.id?"me":null}, rowFn(x,String(rank))); }))));
+}
+
+// ---------- Organizar ----------
+function renderAdmin(box){
+  // Avisos del Excel
+  const recent=new Set(S.races.map(r=>r.id));
+  const unm=S.unmatched.filter(u=>recent.has(u.race));
+  box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Estado del Excel"),
+    h("p",{class:"note",style:"margin:6px 0 0"}, `${S.riders.h.length} corredores y ${S.riders.m.length} corredoras en la lista. `,
+      `Resultados encontrados en ${S.races.filter(r=>hasResult(r.id)).length} carreras de la Copa.`),
+    unm.length ? h("div",{style:"margin-top:10px"}, h("p",{class:"note err",style:"margin:0"},"Sin equivalencia en Corredores (no puntúan hasta que los añadas):"),
+      h("ul",{class:"note"}, unm.slice(0,30).map(u=>h("li",{text:`${u.name} · ${u.race} (${u.cat==="h"?"H":"M"})`})))) : h("p",{class:"note ok",style:"margin:6px 0 0"},"Todos los corredores de los resultados tienen equivalencia."),
+    h("div",{class:"row"}, h("button",{class:"btn ghost",onclick:async e=>{ e.currentTarget.disabled=true; await refresh(); }},"Volver a leer el Excel"),
+      h("button",{class:"btn ghost",onclick:syncCalendar},"Sincronizar calendario"), h("span",{class:"note",id:"sync-msg"}))));
+
+  // Carreras: cierre y clase
+  const list=[...S.races].sort((a,b)=>a.race_date.localeCompare(b.race_date));
+  box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Carreras"),
+    h("p",{class:"note",style:"margin:4px 0 6px"},"Cierre por defecto: el día de la carrera a las 13:30 (en Europeo y Mundial, el sábado). Cambia lo que necesites y pulsa Guardar en esa fila."),
+    list.map(r=>{
+      const id=r.id.replace(/[^\w-]/g,"_");
+      const dt=h("input",{type:"datetime-local",id:`dl-${id}`,value:toLocalInput(r.deadline),"aria-label":`Cierre ${r.name}`});
+      const cl=h("select",{id:`cl-${id}`,"aria-label":`Clase UCI ${r.name}`}, CLASSES.map(c=>h("option",{value:c,selected:c===r.uci_class},c)));
+      const act=h("input",{type:"checkbox",id:`ac-${id}`,checked:r.active});
+      const m=h("span",{class:"note"});
+      return h("div",{class:"admrow"},
+        h("div",{class:"nmcol",style:"min-width:0"}, h("strong",{text:r.name}), h("div",{class:"meta"}, fmtDay(r.race_date), hasResult(r.id)?" · con resultado":""),
+          h("label",{class:"note",style:"display:inline-flex;gap:6px;align-items:center"}, act, "En juego")),
+        dt, cl,
+        h("div",{}, h("button",{class:"btn small",onclick:async()=>{
+          const deadline=dt.value?new Date(dt.value).toISOString():null;
+          const {error}=await sb.from("races").update({deadline, uci_class:cl.value, active:act.checked}).eq("id",r.id);
+          if(error){ m.className="note err"; m.textContent="Error"; return; }
+          Object.assign(r,{deadline,uci_class:cl.value,active:act.checked}); clearDirty(`dl-${id}`); clearDirty(`cl-${id}`);
+          m.className="note ok"; m.textContent="✓";
+        }},"Guardar"), m));
+    })));
+
+  // Escalas UCI
+  const tas={}; const sm=h("span",{class:"note"});
+  box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Puntos UCI por clase"),
+    h("p",{class:"note",style:"margin:4px 0 0"},"Puntos del 1º, 2º, 3º… separados por comas. Las posiciones que no aparecen suman 0."),
+    CLASSES.map(c=>{ tas[c]=h("textarea",{id:`sc-${c}`,"aria-label":`Escala ${c}`}); tas[c].value=(S.scales[c]||[]).join(", ");
+      return h("div",{class:"field"}, h("label",{for:`sc-${c}`}, c), tas[c]); }),
+    h("div",{class:"row"}, h("button",{class:"btn",onclick:async()=>{
+      const value={}; for(const c of CLASSES) value[c]=tas[c].value.split(/[,;\s]+/).map(Number).filter(n=>!isNaN(n)&&n>=0);
+      const {error}=await sb.from("settings").upsert({key:"uci_scales",value});
+      if(error){ sm.className="note err"; sm.textContent="No se pudo guardar."; return; }
+      S.scales=value; clearDirty("sc-"); sm.className="note ok"; sm.textContent="Escalas guardadas. Las clasificaciones ya usan los nuevos puntos.";
+    }},"Guardar escalas"), sm)));
+}
+
+async function syncCalendar(){
+  const m=document.getElementById("sync-msg"); m.className="note"; m.textContent="Leyendo la pestaña Carreras…";
+  try{
+    const {cols,rows}=await readTab(TABS.carreras);
+    const ii=colIdx(cols,/ID_Carrera/i,0), id=colIdx(cols,/^fecha/i,1), is=colIdx(cols,/^serie/i,2), inn=colIdx(cols,/^nombre/i,3);
+    const parse=s=>{ const x=(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); return x?`${x[3]}-${x[2].padStart(2,"0")}-${x[1].padStart(2,"0")}`:null; };
+    const today=new Date().toISOString().slice(0,10);
+    const known=new Map(S.races.map(r=>[r.id,r]));
+    const inserts=[], updates=[];
+    for(const r of rows){
+      const rid=r[ii]; if(!rid || !rid.includes(SEASON)) continue;
+      const date=parse(r[id]); if(!date) continue;
+      const ex=known.get(rid);
+      if(!ex){ if(date>=today){ const n=r[inn]||rid, s=r[is]||"";
+        inserts.push({id:rid,name:n,series:s,race_date:date,uci_class:s==="Copa del Mundo"?"CDM":/europa/i.test(n)?"CE":/campeonato del mundo/i.test(n)?"CM":"C1"}); } }
+      else if(ex.race_date!==date || ex.name!==(r[inn]||ex.name)) updates.push({id:rid, name:r[inn]||ex.name, race_date:date});
+    }
+    if(inserts.length){ const {error}=await sb.from("races").insert(inserts); if(error) throw error; }
+    for(const u of updates){ const {error}=await sb.from("races").update({name:u.name, race_date:u.race_date}).eq("id",u.id); if(error) throw error; }
+    m.className="note ok";
+    m.textContent=`${inserts.length} carreras nuevas, ${updates.length} actualizadas.` + (updates.length?" Revisa el cierre de las que han cambiado de fecha.":"");
+    await refresh();
+  }catch(e){ m.className="note err"; m.textContent="No se pudo sincronizar: "+(e.message||e); }
+}
+
+// ---------- arranque ----------
+try{ const t=localStorage.getItem("cc-tab"); if(t) S.tab=t; }catch(e){}
+if(configured){
+  sb.auth.onAuthStateChange((_ev, session)=>{
+    const changed=(S.session?.user?.id)!==(session?.user?.id);
+    S.session=session;
+    if(session && changed){ S.loaded=false; render(); refresh(); }
+    else render();
+  });
+  // Refresca abierta/cerrada cada minuto (solo pinta, no escribe nada)
+  setInterval(()=>{ if(S.session && S.tab==="carreras" && !document.activeElement?.matches?.("input,select,textarea")) render(); },60000);
+}
+render();
+</script>
+</body>
+</html>
