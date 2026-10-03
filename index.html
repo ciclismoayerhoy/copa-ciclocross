@@ -252,8 +252,8 @@ const played = p => p && CATS.some(c=>(p[c.k]||[]).some(x=>norm(x)));
 const pickOf = (uid, raceId) => S.picks.find(p=>p.user_id===uid && p.race_id===raceId) || null;
 const isOpen = r => r.active && r.deadline && Date.now() < new Date(r.deadline).getTime();
 
-function standings(){
-  const done=S.races.filter(r=>r.active && hasResult(r.id));
+function standings(filter=()=>true){
+  const done=S.races.filter(r=>r.active && hasResult(r.id) && filter(r));
   const minRaces=Math.ceil(done.length/2);
   const rows=Object.values(S.profiles).map(pr=>{
     let pts=0,n=0,hit=0,att=0;
@@ -280,6 +280,11 @@ async function loadDb(){
   S.profiles=Object.fromEntries(pr.data.map(p=>[p.id,p]));
   S.profile=S.profiles[S.session.user.id]||null;
   S.races=ra.data; S.picks=pk.data; S.scales=st.data?.value||{};
+  S.requests=[];
+  if(S.profile?.is_admin){
+    const {data}=await sb.from("reset_requests").select("*").eq("done",false).order("created_at");
+    S.requests=data||[];
+  }
 }
 async function refresh(){
   try{ await Promise.all([loadDb(), loadSheet()]); }
@@ -307,10 +312,13 @@ function paint(){
   if(!S.session){ app.append(authView()); return; }
   if(!S.loaded){ app.append(h("div",{class:"empty"},"Cargando carreras y resultados…")); return; }
   ub.append("Juegas como ", h("strong",{text:S.profile?.alias||"…"}), h("br"),
-    h("button",{class:"btn ghost small",onclick:async()=>{ await sb.auth.signOut(); }},"Salir"));
+    h("span",{style:"display:inline-flex;gap:6px;margin-top:4px"},
+      h("button",{class:"btn ghost small",onclick:()=>{S.showPass=!S.showPass;render();}},"Contraseña"),
+      h("button",{class:"btn ghost small",onclick:async()=>{ await sb.auth.signOut(); }},"Salir")));
+  if(S.showPass) app.append(passwordCard());
 
   const tabs=[["carreras","Carreras"],["clasif","Clasificaciones"]];
-  if(S.profile?.is_admin) tabs.push(["admin","Organizar"]);
+  if(S.profile?.is_admin) tabs.push(["admin", (S.requests||[]).length ? `Organizar (${S.requests.length})` : "Organizar"]);
   if(!tabs.some(t=>t[0]===S.tab)) S.tab="carreras";
   app.append(h("nav",{role:"tablist"}, tabs.map(([k,l])=>h("button",{role:"tab","aria-selected":String(S.tab===k),onclick:()=>{S.tab=k;try{localStorage.setItem("cc-tab",k);}catch(e){} render();}},l))));
   if(S.sheetErrors.length && S.profile?.is_admin) app.append(h("div",{class:"banner",style:"margin-bottom:14px"}, S.sheetErrors.map(e=>h("div",{class:"note err",text:e}))));
@@ -320,7 +328,48 @@ function paint(){
   if(S.tab==="admin") renderAdmin(sec);
 }
 
+function forgotView(){
+  const msg=h("p",{class:"note"});
+  const form=h("form",{class:"card auth",onsubmit:async e=>{
+    e.preventDefault();
+    const email=form.querySelector("#f-email").value.trim();
+    if(!/^\S+@\S+\.\S+$/.test(email)){ msg.className="note err"; msg.textContent="Escribe el email con el que te registraste."; return; }
+    const btn=form.querySelector("button[type=submit]"); btn.disabled=true;
+    const {error}=await sb.from("reset_requests").insert({contact:email});
+    if(error){ msg.className="note err"; msg.textContent="No se ha podido enviar. Inténtalo de nuevo."; btn.disabled=false; return; }
+    clearDirty("f-");
+    form.replaceChildren(h("h2",{class:"race-name",style:"font-size:1.5rem"},"Petición enviada"),
+      h("p",{},"El organizador te enviará una contraseña temporal a tu correo. Cuando entres, cámbiala desde el botón «Contraseña»."),
+      h("div",{class:"row"}, h("button",{class:"btn ghost",type:"button",onclick:()=>{S.authMode="login";render();}},"Volver a entrar")));
+  }},
+    h("h2",{class:"race-name",style:"font-size:1.5rem"},"Contraseña olvidada"),
+    h("p",{class:"note",style:"margin:6px 0 0"},"El organizador te enviará una contraseña temporal al correo con el que te registraste."),
+    h("div",{class:"field"}, h("label",{for:"f-email"},"Tu email"), h("input",{type:"email",id:"f-email",maxlength:"120",required:true,autocomplete:"email"})),
+    h("div",{class:"row"}, h("button",{class:"btn",type:"submit"},"Pedir contraseña nueva"),
+      h("button",{class:"btn ghost",type:"button",onclick:()=>{S.authMode="login";render();}},"Volver")),
+    msg);
+  return form;
+}
+
+function passwordCard(){
+  const msg=h("span",{class:"note"});
+  const p1=h("input",{type:"password",id:"np-1",minlength:"6",autocomplete:"new-password"});
+  const p2=h("input",{type:"password",id:"np-2",minlength:"6",autocomplete:"new-password"});
+  return h("div",{class:"card",style:"margin-bottom:14px"},
+    h("h3",{class:"race-name",style:"font-size:1.3rem"},"Cambiar contraseña"),
+    h("div",{class:"cats"}, h("div",{class:"field",style:"margin-top:0"},h("label",{for:"np-1"},"Nueva contraseña"),p1), h("div",{class:"field",style:"margin-top:0"},h("label",{for:"np-2"},"Repítela"),p2)),
+    h("div",{class:"row"}, h("button",{class:"btn",onclick:async()=>{
+      msg.className="note err";
+      if(p1.value.length<6){ msg.textContent="Debe tener al menos 6 caracteres."; return; }
+      if(p1.value!==p2.value){ msg.textContent="Las dos contraseñas no coinciden."; return; }
+      const {error}=await sb.auth.updateUser({password:p1.value});
+      if(error){ msg.textContent = /different from the old/i.test(error.message) ? "Tiene que ser distinta de la actual." : "No se ha podido cambiar. Inténtalo de nuevo."; return; }
+      clearDirty("np-"); p1.value=""; p2.value=""; msg.className="note ok"; msg.textContent="Contraseña cambiada.";
+    }},"Guardar"), h("button",{class:"btn ghost",onclick:()=>{S.showPass=false;clearDirty("np-");render();}},"Cerrar"), msg));
+}
+
 function authView(){
+  if(S.authMode==="forgot") return forgotView();
   const reg=S.authMode==="register";
   const msg=h("p",{class:"note",id:"auth-msg"});
   const form=h("form",{class:"card auth",onsubmit:async e=>{
@@ -355,7 +404,8 @@ function authView(){
     h("div",{class:"field"}, h("label",{for:"a-pass"},"Contraseña"), h("input",{type:"password",id:"a-pass",required:true,minlength:"6",autocomplete:reg?"new-password":"current-password"})),
     h("div",{class:"row"}, h("button",{class:"btn",type:"submit"}, reg?"Crear cuenta":"Entrar"),
       h("button",{class:"btn ghost",type:"button",onclick:()=>{S.authMode=reg?"login":"register";render();}}, reg?"Ya tengo cuenta":"Crear cuenta nueva")),
-    msg);
+    msg,
+    reg ? null : h("p",{class:"note",style:"margin:4px 0 0"}, h("a",{href:"#",style:"color:var(--muted)",onclick:e=>{e.preventDefault();S.authMode="forgot";render();}},"¿Has olvidado tu contraseña?")));
   return form;
 }
 
@@ -458,26 +508,52 @@ function myPicks(p, r){
           done&&n ? h("span",{class:"r"}, d?.pos ? `${d.pos}º · ${fmtPts(d.pts)} pts${d.bonus?" (+10 %)":""}` : "sin puntos") : null); }))))));
 }
 
+const MESES=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const monthLabel=ym=>{ const [y,m]=ym.split("-").map(Number); return MESES[m-1]+" "+y; };
+function ptsTable(rows){
+  const list=rows.filter(x=>x.n>0).sort((a,b)=>b.pts-a.pts||a.name.localeCompare(b.name));
+  return table(["","Jugador",{t:"Carreras",num:1},{t:"Puntos",num:1}], list, x=>x.pts, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num pts"},fmtPts(x.pts))]);
+}
+function pctTables(rows, minRaces, label){
+  const out=[h("p",{class:"note",style:"margin:0"}, `Mínimo para entrar: ${minRaces} ${minRaces===1?"carrera jugada":"carreras jugadas"} (la mitad de las disputadas${label}).`)];
+  const ok=x=>x.n>=minRaces && x.att>0;
+  const qual=rows.filter(ok).sort((a,b)=>b.pct-a.pct||b.hit-a.hit||a.name.localeCompare(b.name));
+  const rest=rows.filter(x=>x.n>0 && !ok(x)).sort((a,b)=>b.n-a.n||a.name.localeCompare(b.name));
+  const cols=["","Jugador",{t:"Carreras",num:1},{t:"Aciertos",num:1},{t:"%",num:1}];
+  out.push(table(cols, qual, x=>x.pct, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num pts"},Math.round(x.pct*100)+"%")]));
+  if(rest.length){ out.push(h("h2",{class:"sec"},"Aún sin el mínimo de carreras"));
+    out.push(table(cols, rest, null, x=>[h("td",{class:"rank"},"–"),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num"},x.att?Math.round(x.pct*100)+"%":"—")])); }
+  return out;
+}
+const countLine=n=>h("p",{class:"note",style:"margin:0"}, `${n} ${n===1?"carrera disputada":"carreras disputadas"}`);
+
 function renderClasif(box){
-  const {done,minRaces,rows}=standings();
-  box.append(h("div",{class:"seg",role:"group","aria-label":"Clasificación"},
-    h("button",{"aria-pressed":String(S.clasif==="copa"),onclick:()=>{S.clasif="copa";render();}},"Copa Ciclocross"),
-    h("button",{"aria-pressed":String(S.clasif==="pct"),onclick:()=>{S.clasif="pct";render();}},"% de ganadores")));
-  if(!done.length){ box.append(h("div",{class:"card empty"},"La clasificación aparecerá con los resultados de la primera carrera.")); return; }
-  box.append(h("p",{class:"note",style:"margin:0"}, `${done.length} ${done.length===1?"carrera disputada":"carreras disputadas"}`));
-  if(S.clasif==="copa"){
-    const list=rows.filter(x=>x.n>0).sort((a,b)=>b.pts-a.pts||a.name.localeCompare(b.name));
-    box.append(table(["","Jugador",{t:"Carreras",num:1},{t:"Puntos",num:1}], list, x=>x.pts, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num pts"},fmtPts(x.pts))]));
-  } else {
-    box.append(h("p",{class:"note",style:"margin:0"}, `Mínimo para entrar: ${minRaces} ${minRaces===1?"carrera jugada":"carreras jugadas"} (la mitad de las disputadas).`));
-    const ok=x=>x.n>=minRaces && x.att>0;
-    const qual=rows.filter(ok).sort((a,b)=>b.pct-a.pct||b.hit-a.hit||a.name.localeCompare(b.name));
-    const out=rows.filter(x=>x.n>0 && !ok(x)).sort((a,b)=>b.n-a.n||a.name.localeCompare(b.name));
-    const cols=["","Jugador",{t:"Carreras",num:1},{t:"Aciertos",num:1},{t:"%",num:1}];
-    box.append(table(cols, qual, x=>x.pct, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num pts"},Math.round(x.pct*100)+"%")]));
-    if(out.length){ box.append(h("h2",{class:"sec"},"Aún sin el mínimo de carreras"));
-      box.append(table(cols, out, null, x=>[h("td",{class:"rank"},"–"),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num"},x.att?Math.round(x.pct*100)+"%":"—")])); }
+  const views=[["copa","Copa Ciclocross"],["pct","% de ganadores"],["mes","Por meses"],["cdm","Copa del Mundo"]];
+  box.append(h("div",{class:"seg",role:"group","aria-label":"Clasificación",style:"flex-wrap:wrap"},
+    views.map(([k,l])=>h("button",{"aria-pressed":String(S.clasif===k),onclick:()=>{S.clasif=k;render();}},l))));
+  const all=standings();
+  if(!all.done.length){ box.append(h("div",{class:"card empty"},"La clasificación aparecerá con los resultados de la primera carrera.")); return; }
+
+  if(S.clasif==="copa"){ box.append(countLine(all.done.length), ptsTable(all.rows)); return; }
+  if(S.clasif==="pct"){ box.append(countLine(all.done.length), ...pctTables(all.rows, all.minRaces, "")); return; }
+
+  if(S.clasif==="cdm"){
+    const cdm=standings(r=>r.series==="Copa del Mundo");
+    const total=S.races.filter(r=>r.active && r.series==="Copa del Mundo").length;
+    box.append(h("p",{class:"note",style:"margin:0"}, `Suma de los puntos de las pruebas de la Copa del Mundo: ${cdm.done.length} de ${total} disputadas.`));
+    box.append(cdm.done.length ? ptsTable(cdm.rows) : h("div",{class:"card empty"},"Aparecerá con la primera prueba de la Copa del Mundo (Ostrava, 27 de noviembre)."));
+    return;
   }
+
+  // Por meses
+  const months=[...new Set(all.done.map(r=>r.race_date.slice(0,7)))].sort();
+  if(!months.includes(S.clasifMes)) S.clasifMes=months[months.length-1];
+  const sel=h("select",{id:"sel-mes","aria-label":"Mes",style:"width:auto",onchange:e=>{S.clasifMes=e.target.value;clearDirty("sel-mes");render();}},
+    months.map(m=>h("option",{value:m,selected:m===S.clasifMes},monthLabel(m))));
+  const ms=standings(r=>r.race_date.slice(0,7)===S.clasifMes);
+  box.append(h("div",{class:"row",style:"margin-top:0"}, sel, countLine(ms.done.length)));
+  box.append(h("h2",{class:"sec"},`Puntos de ${MESES[Number(S.clasifMes.slice(5))-1]}`), ptsTable(ms.rows));
+  box.append(h("h2",{class:"sec"},`Aciertos de ganador de ${MESES[Number(S.clasifMes.slice(5))-1]}`), ...pctTables(ms.rows, ms.minRaces, " del mes"));
 }
 function table(cols, list, keyFn, rowFn){
   if(!list.length) return h("div",{class:"card empty"},"Nadie en esta clasificación todavía.");
@@ -507,6 +583,53 @@ function renderAdmin(box){
           h("td",{}, p.alias, p.is_admin?h("span",{class:"cls"},"ORG"):null), h("td",{text:fmtAlta(p.created_at)}), h("td",{class:"num"},String(nPlayed(p.id))))))))));
   }
   box.append(pl);
+
+  // Contraseñas
+  const reqs=S.requests||[];
+  const genPass=()=>{ const c="abcdefghjkmnpqrstuvwxyz23456789"; let x=""; const a=new Uint32Array(8); crypto.getRandomValues(a); for(const n of a) x+=c[n%c.length]; return x; };
+  const site=location.origin+location.pathname;
+  // Pone una contraseña temporal y enseña cómo enviarla
+  async function doReset(target, out, btn){
+    const pass=genPass(); btn.disabled=true; out.className="note"; out.textContent="Un momento…";
+    const {data,error}=await sb.functions.invoke("admin",{body:{action:"reset",password:pass,...target}});
+    btn.disabled=false;
+    if(error||!data?.ok){ let m=data?.error; try{ m=m||(await error?.context?.json())?.error; }catch(_){}
+      out.className="note err"; out.textContent="No se ha podido cambiar: "+(m||error?.message||"error"); return false; }
+    const email=data.email||target.email||"";
+    const subject="Copa Ciclocross: tu contraseña temporal";
+    const bodyTxt=`Hola,\n\nTu contraseña temporal para la Copa Ciclocross es: ${pass}\n\nEntra en ${site} con tu email y esta contraseña, y cámbiala desde el botón «Contraseña».\n\n¡Suerte!`;
+    out.className="note ok";
+    out.replaceChildren("Contraseña temporal: ", h("strong",{style:"font-size:1.1rem;letter-spacing:.05em;color:var(--ink);user-select:all",text:pass}), h("br"),
+      h("span",{class:"row",style:"margin-top:6px"},
+        h("a",{class:"btn small",href:`mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyTxt)}`},"Abrir correo"),
+        h("button",{class:"btn ghost small",onclick:async ev=>{ try{ await navigator.clipboard.writeText(bodyTxt); ev.currentTarget.textContent="Mensaje copiado"; }catch(_){} }},"Copiar mensaje"),
+        email?h("span",{class:"note",text:"Para: "+email}):null));
+    return true;
+  }
+  const pwBox=h("div",{class:"card"},
+    h("div",{class:"race-head"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Contraseñas"),
+      reqs.length?h("span",{class:"chip closed"},`${reqs.length} ${reqs.length===1?"petición":"peticiones"}`):null));
+  if(reqs.length){
+    pwBox.append(h("div",{class:"stack",style:"gap:10px;margin-top:10px"}, reqs.map(r=>{
+      const out=h("div",{class:"note"});
+      return h("div",{style:"border-top:1px solid var(--line);padding-top:10px"},
+        h("div",{class:"row",style:"margin-top:0"},
+          h("span",{class:"nm",style:"flex:1;min-width:0;overflow-wrap:anywhere"}, h("strong",{text:r.contact}), h("span",{class:"note"}," · "+fmtDT(r.created_at))),
+          h("button",{class:"btn small",onclick:e=>doReset({email:r.contact},out,e.currentTarget)},"Nueva contraseña"),
+          h("button",{class:"btn ghost small",onclick:async()=>{ const {error}=await sb.from("reset_requests").update({done:true}).eq("id",r.id);
+            if(!error){ S.requests=S.requests.filter(x=>x.id!==r.id); render(); } }},"Hecho")),
+        out);
+    })));
+  } else pwBox.append(h("p",{class:"note",style:"margin:4px 0 0"},"No hay peticiones pendientes."));
+  // También a mano, eligiendo jugador
+  const selP=h("select",{id:"rp-user","aria-label":"Jugador"}, h("option",{value:""},"Elige jugador…"),
+    [...players].sort((a,b)=>a.alias.localeCompare(b.alias)).map(p=>h("option",{value:p.id},p.alias)));
+  const pwOut=h("div",{class:"note",style:"margin-top:8px"});
+  pwBox.append(h("details",{style:"margin-top:14px"}, h("summary",{},"Poner una contraseña a un jugador sin petición"),
+    h("div",{class:"row"}, h("div",{style:"flex:1;min-width:160px"},selP),
+      h("button",{class:"btn ghost",onclick:e=>{ if(!selP.value){ pwOut.className="note err"; pwOut.textContent="Elige un jugador."; return; } doReset({user_id:selP.value},pwOut,e.currentTarget); }},"Nueva contraseña")),
+    pwOut));
+  box.append(pwBox);
 
   // Avisos del Excel
   const recent=new Set(S.races.map(r=>r.id));
