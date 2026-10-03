@@ -124,7 +124,9 @@ const SUPABASE_ANON_KEY = "sb_publishable_Qmj-8kEz7SroCVmXyI61VQ_-JT241lH";
 
 // Tu Excel de Google Drive (debe estar compartido: cualquiera con el enlace puede ver)
 const SHEET_ID = "1B_663eOb7utnCpj3_7JvCKUVU3FVGCCT";
-const TABS = { carreras: "Carreras", corredores: "Corredores", h: "Históricos H 26-27", m: "Históricos M 26-27" };
+const TABS = { carreras: "Carreras", corredores: "Corredores",
+  h: ["Históricos H 26-27", "Resultados_H"],   // se usa la primera que exista
+  m: ["Históricos M 26-27", "Resultados_M"] };
 const SEASON = "2026-27";
 const WINNER_BONUS = 0.10;   // +10 % si tu elección de ganador gana
 // =====================================================================
@@ -192,7 +194,11 @@ const colIdx = (cols, re, fallback) => { const i=cols.findIndex(c=>re.test(c)); 
 
 async function loadSheet(){
   S.sheetErrors=[];
-  const [cor, rh, rm] = await Promise.allSettled([readTab(TABS.corredores), readTab(TABS.h), readTab(TABS.m)]);
+  const firstResults = async names => {
+    for(const n of names){ try{ const t=await readTab(n); if(t.cols.some(c=>/ID_Carrera/i.test(c))) return t; }catch(e){} }
+    throw new Error("no encontrada");
+  };
+  const [cor, rh, rm] = await Promise.allSettled([readTab(TABS.corredores), firstResults(TABS.h), firstResults(TABS.m)]);
   // Corredores
   if(cor.status==="fulfilled" && cor.value.cols.some(c=>/oficial/i.test(c)) && cor.value.cols.some(c=>/categor/i.test(c))){
     const {cols,rows}=cor.value; const io=colIdx(cols,/oficial/i,1), ic=colIdx(cols,/categor/i,2);
@@ -204,7 +210,7 @@ async function loadSheet(){
   // Resultados
   S.results={}; S.unmatched=[];
   for(const [k,res] of [["h",rh],["m",rm]]){
-    if(res.status!=="fulfilled" || !res.value.cols.some(c=>/ID_Carrera/i.test(c))){ S.sheetErrors.push(`No encuentro la pestaña de resultados "${TABS[k]}". Revisa que el nombre coincide exactamente.`); continue; }
+    if(res.status!=="fulfilled" || !res.value.cols.some(c=>/ID_Carrera/i.test(c))){ S.sheetErrors.push(`No encuentro la pestaña de resultados ${k==="h"?"masculinos":"femeninos"} (busco "${TABS[k].join('" o "')}").`); continue; }
     const {cols,rows}=res.value;
     const ip=colIdx(cols,/^posici/i,0), iw=colIdx(cols,/corredor/i,1), ir=colIdx(cols,/ID_Carrera/i,5), io=colIdx(cols,/oficial/i,6);
     for(const r of rows){
