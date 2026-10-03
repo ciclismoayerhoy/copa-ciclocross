@@ -271,7 +271,7 @@ function standings(){
 // ---------- carga de datos ----------
 async function loadDb(){
   const [pr, ra, pk, st] = await Promise.all([
-    sb.from("profiles").select("id,alias,is_admin"),
+    sb.from("profiles").select("id,alias,is_admin,created_at"),
     sb.from("races").select("*").order("race_date"),
     sb.from("picks").select("*"),
     sb.from("settings").select("*").eq("key","uci_scales").maybeSingle()
@@ -490,6 +490,24 @@ function table(cols, list, keyFn, rowFn){
 
 // ---------- Organizar ----------
 function renderAdmin(box){
+  // Jugadores
+  const players=Object.values(S.profiles).sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
+  const doneIds=new Set(S.races.filter(r=>r.active && hasResult(r.id)).map(r=>r.id));
+  const nPlayed=uid=>S.picks.filter(p=>p.user_id===uid && doneIds.has(p.race_id) && played(p)).length;
+  const fmtAlta=iso=>iso?new Date(iso).toLocaleDateString("es-ES",{day:"numeric",month:"short",year:"numeric"}):"";
+  const pl=h("div",{class:"card"},
+    h("div",{class:"race-head"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Jugadores"), h("span",{class:"pts"},String(players.length))),
+    h("p",{class:"note",style:"margin:4px 0 0"}, players.length===1?"1 persona registrada.":`${players.length} personas registradas, de la más reciente a la más antigua.`));
+  if(players.length){
+    pl.append(h("details",{open:S.openDetails.has("__players"),ontoggle:e=>{e.currentTarget.open?S.openDetails.add("__players"):S.openDetails.delete("__players");}},
+      h("summary",{},"Ver la lista"),
+      h("div",{class:"tablewrap"}, h("table",{},
+        h("thead",{},h("tr",{},h("th",{},"Jugador"),h("th",{},"Alta"),h("th",{class:"num"},"Carreras jugadas"))),
+        h("tbody",{}, players.map(p=>h("tr",{class:p.id===S.session.user.id?"me":null},
+          h("td",{}, p.alias, p.is_admin?h("span",{class:"cls"},"ORG"):null), h("td",{text:fmtAlta(p.created_at)}), h("td",{class:"num"},String(nPlayed(p.id))))))))));
+  }
+  box.append(pl);
+
   // Avisos del Excel
   const recent=new Set(S.races.map(r=>r.id));
   const unm=S.unmatched.filter(u=>recent.has(u.race));
