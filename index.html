@@ -145,7 +145,7 @@ const CLASSES = ["CDM","CM","CE","C1","C2"];
 
 document.getElementById("rules").textContent =
   "Cada corredor que eliges suma los puntos UCI de la posición en la que acaba. Si tu elección de ganador gana, sus puntos llevan un +10 %. " +
-  "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. " +
+  "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. En caso de empate, va delante quien guardó antes su pronóstico. " +
   "Para entrar en la clasificación de % de ganadores hay que haber jugado al menos la mitad de las carreras disputadas.";
 
 const configured = !SUPABASE_URL.startsWith("PEGA");
@@ -263,6 +263,7 @@ const isOpen = r => r.active && r.deadline && Date.now() < new Date(r.deadline).
 function standings(filter=()=>true){
   const done=S.races.filter(r=>r.active && hasResult(r.id) && filter(r));
   const minRaces=Math.ceil(done.length/2);
+  const last=[...done].sort((a,b)=>(b.race_date||"").localeCompare(a.race_date||"")||(b.deadline||"").localeCompare(a.deadline||""))[0];
   const rows=Object.values(S.profiles).map(pr=>{
     let pts=0,n=0,hit=0,att=0;
     for(const r of done){
@@ -271,7 +272,10 @@ function standings(filter=()=>true){
       for(const c of CATS){ const g=(p[c.k]||[])[0]; const R=S.results[r.id];
         if(g && R[c.k].size){ att++; if(R[c.k].get(norm(g))===1) hit++; } }
     }
-    return {uid:pr.id, name:pr.alias, pts:round1(pts), n, hit, att, pct:att?hit/att:0};
+    // desempate: quien guardó antes su pronóstico de la última carrera disputada (sin pronóstico, detrás)
+    const lp=last?pickOf(pr.id,last.id):null;
+    const tie=(lp && played(lp) && lp.updated_at) ? new Date(lp.updated_at).getTime() : Infinity;
+    return {uid:pr.id, name:pr.alias, pts:round1(pts), n, hit, att, pct:att?hit/att:0, tie};
   });
   return {done, minRaces, rows};
 }
@@ -494,7 +498,7 @@ function raceCard(r){
   }
   const others=S.picks.filter(p=>p.race_id===r.id && played(p));
   if(others.length){
-    const rows=others.map(p=>({p, s:pickScore(p,r), name:S.profiles[p.user_id]?.alias||"?"})).sort((a,b)=>b.s.total-a.s.total||a.name.localeCompare(b.name));
+    const rows=others.map(p=>({p, s:pickScore(p,r), name:S.profiles[p.user_id]?.alias||"?"})).sort((a,b)=>b.s.total-a.s.total||new Date(a.p.updated_at||0)-new Date(b.p.updated_at||0)||a.name.localeCompare(b.name));
     card.append(h("details",{open:S.openDetails.has(r.id),ontoggle:e=>{e.currentTarget.open?S.openDetails.add(r.id):S.openDetails.delete(r.id);}},
       h("summary",{},`Pronósticos de todos (${others.length})`),
       h("div",{class:"tablewrap"}, h("table",{},
@@ -520,16 +524,16 @@ function myPicks(p, r){
 const MESES=["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 const monthLabel=ym=>{ const [y,m]=ym.split("-").map(Number); return MESES[m-1]+" "+y; };
 function ptsTable(rows){
-  const list=rows.filter(x=>x.n>0).sort((a,b)=>b.pts-a.pts||a.name.localeCompare(b.name));
-  return table(["","Jugador",{t:"Carreras",num:1},{t:"Puntos",num:1}], list, x=>x.pts, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num pts"},fmtPts(x.pts))]);
+  const list=rows.filter(x=>x.n>0).sort((a,b)=>b.pts-a.pts||a.tie-b.tie||a.name.localeCompare(b.name));
+  return table(["","Jugador",{t:"Carreras",num:1},{t:"Puntos",num:1}], list, null, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num pts"},fmtPts(x.pts))]);
 }
 function pctTables(rows, minRaces, label){
   const out=[h("p",{class:"note",style:"margin:0"}, `Mínimo para entrar: ${minRaces} ${minRaces===1?"carrera jugada":"carreras jugadas"} (la mitad de las disputadas${label}).`)];
   const ok=x=>x.n>=minRaces && x.att>0;
-  const qual=rows.filter(ok).sort((a,b)=>b.pct-a.pct||b.hit-a.hit||a.name.localeCompare(b.name));
+  const qual=rows.filter(ok).sort((a,b)=>b.pct-a.pct||b.hit-a.hit||a.tie-b.tie||a.name.localeCompare(b.name));
   const rest=rows.filter(x=>x.n>0 && !ok(x)).sort((a,b)=>b.n-a.n||a.name.localeCompare(b.name));
   const cols=["","Jugador",{t:"Carreras",num:1},{t:"Aciertos",num:1},{t:"%",num:1}];
-  out.push(table(cols, qual, x=>x.pct, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num pts"},Math.round(x.pct*100)+"%")]));
+  out.push(table(cols, qual, null, (x,rk)=>[h("td",{class:"rank"},rk),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num pts"},Math.round(x.pct*100)+"%")]));
   if(rest.length){ out.push(h("h2",{class:"sec"},"Aún sin el mínimo de carreras"));
     out.push(table(cols, rest, null, x=>[h("td",{class:"rank"},"–"),h("td",{text:x.name}),h("td",{class:"num"},String(x.n)),h("td",{class:"num"},`${x.hit}/${x.att}`),h("td",{class:"num"},x.att?Math.round(x.pct*100)+"%":"—")])); }
   return out;
