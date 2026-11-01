@@ -112,6 +112,7 @@ h2.sec{font-size:13px;margin:6px 0 0;text-transform:uppercase;letter-spacing:.08
 .pr-name{flex:1;min-width:0;font-weight:600;overflow-wrap:anywhere}
 .pr-head .pts{font-size:1.25rem;white-space:nowrap}
 .pr-picks{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:6px 0 0 38px}
+.cats > .cat:only-child,.pr-picks > div:only-child{grid-column:1/-1}
 .pr-picks .tg{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
 .pk div{overflow-wrap:anywhere}
 .season tr.sel td{background:color-mix(in srgb,var(--tape) 12%,transparent)}
@@ -156,6 +157,11 @@ const WINNER_BONUS = 0.10;   // +10 % si tu elección de ganador gana
 // =====================================================================
 
 const CATS = [{k:"h", label:"Élite masculina", dl:"dl-h"}, {k:"m", label:"Élite femenina", dl:"dl-m"}];
+// Una carrera puede ser de las dos categorías ("hm") o de una sola ("h" / "m"), como el Europeo y el Mundial.
+// sheet_id: el ID de la carrera en la hoja, cuando no coincide con el de la web.
+const catsOf = r => (!r || !r.cats || r.cats==="hm") ? CATS : CATS.filter(c=>r.cats.includes(c.k));
+const resKey = r => r?.sheet_id || r?.id;
+const raceById = id => S.races.find(x=>x.id===id);
 const SLOTS = ["Ganador","2ª elección","3ª elección"];
 const CLASSES = ["CDM","CM","CE","C1","C2"];
 
@@ -254,16 +260,16 @@ async function loadSheet(){
 }
 
 // ---------- puntuación ----------
-const hasResult = raceId => { const R=S.results[raceId]; return !!R && (R.h.size>0 || R.m.size>0); };
+const hasResult = raceId => { const r=raceById(raceId); const R=S.results[resKey(r)||raceId]; return !!R && catsOf(r).some(c=>R[c.k].size>0); };
 const scaleFor = cls => S.scales[cls] || [];
 function riderPoints(name, cat, race){
-  const R=S.results[race.id]; if(!R||!name) return {pos:null, pts:0};
+  const R=S.results[resKey(race)]; if(!R||!name) return {pos:null, pts:0};
   const pos=R[cat].get(norm(name)); if(!pos) return {pos:null, pts:0};
   return {pos, pts: scaleFor(race.uci_class)[pos-1] || 0};
 }
 function pickScore(p, race){
   let total=0; const detail={h:[],m:[]};
-  for(const c of CATS){
+  for(const c of catsOf(race)){
     (p[c.k]||[]).forEach((name,i)=>{
       const r=riderPoints(name,c.k,race); let pts=r.pts;
       const bonus = (i===0 && r.pos===1) ? pts*WINNER_BONUS : 0;
@@ -272,7 +278,7 @@ function pickScore(p, race){
   }
   return {total:round1(total), detail};
 }
-const played = p => p && CATS.some(c=>(p[c.k]||[]).some(x=>norm(x)));
+const played = (p, r) => p && (r ? catsOf(r) : CATS).some(c=>(p[c.k]||[]).some(x=>norm(x)));
 const pickOf = (uid, raceId) => S.picks.find(p=>p.user_id===uid && p.race_id===raceId) || null;
 const isOpen = r => r.active && r.deadline && Date.now() < new Date(r.deadline).getTime();
 
@@ -283,14 +289,14 @@ function standings(filter=()=>true){
   const rows=Object.values(S.profiles).map(pr=>{
     let pts=0,n=0,hit=0,att=0;
     for(const r of done){
-      const p=pickOf(pr.id,r.id); if(!played(p)) continue;
+      const p=pickOf(pr.id,r.id); if(!played(p,r)) continue;
       n++; pts+=pickScore(p,r).total;
-      for(const c of CATS){ const g=(p[c.k]||[])[0]; const R=S.results[r.id];
+      for(const c of catsOf(r)){ const g=(p[c.k]||[])[0]; const R=S.results[resKey(r)];
         if(g && R[c.k].size){ att++; if(R[c.k].get(norm(g))===1) hit++; } }
     }
     // desempate: quien guardó antes su pronóstico de la última carrera disputada (sin pronóstico, detrás)
     const lp=last?pickOf(pr.id,last.id):null;
-    const tie=(lp && played(lp) && lp.updated_at) ? new Date(lp.updated_at).getTime() : Infinity;
+    const tie=(lp && played(lp,last) && lp.updated_at) ? new Date(lp.updated_at).getTime() : Infinity;
     return {uid:pr.id, name:pr.alias, pts:round1(pts), n, hit, att, pct:att?hit/att:0, tie};
   });
   return {done, minRaces, rows};
@@ -473,7 +479,7 @@ function raceCard(r){
 
   if(open){
     const ids={};
-    card.append(h("div",{class:"cats"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label),
+    card.append(h("div",{class:"cats"}, catsOf(r).map(c=>h("div",{class:"cat"}, h("h3",{},c.label),
       SLOTS.map((slot,i)=>{ const id=`p-${r.id}-${c.k}-${i}`.replace(/[^\w-]/g,"_"); ids[c.k+i]=id;
         return h("div",{class:"pos"}, h("label",{for:id,class:i===0?"win":null},slot),
           h("input",{type:"text",id,"data-cat":c.k,autocomplete:"off",autocapitalize:"off",spellcheck:"false",role:"combobox","aria-autocomplete":"list","aria-expanded":"false",placeholder:"Escribe y elige",value:(mine?.[c.k]||[])[i]||""})); })))));
@@ -481,8 +487,8 @@ function raceCard(r){
     const btn=h("button",{class:"btn",onclick:async()=>{
       msg.className="note err";
       if(!isOpen(r)){ msg.textContent="Esta carrera ya está cerrada."; render(); return; }
-      const entry={};
-      for(const c of CATS){
+      const entry={h:[],m:[]};
+      for(const c of catsOf(r)){
         const vals=SLOTS.map((_,i)=>document.getElementById(ids[c.k+i]).value.trim());
         for(const v of vals) if(v && S.riderSet[c.k].size && !S.riderSet[c.k].has(norm(v))){ msg.textContent=`"${v}" no está en la lista de ${c.label.toLowerCase()}. Elígelo de las sugerencias.`; return; }
         const filled=vals.filter(Boolean).map(norm);
@@ -490,7 +496,7 @@ function raceCard(r){
         // guarda con el nombre oficial exacto de la lista
         entry[c.k]=vals.map(v=>v ? (S.riders[c.k].find(n=>norm(n)===norm(v))||v) : "");
       }
-      if(!played(entry)){ msg.textContent="Rellena al menos una elección."; return; }
+      if(!played(entry,r)){ msg.textContent="Rellena al menos una elección."; return; }
       btn.disabled=true; msg.className="note"; msg.textContent="Guardando…";
       const row={user_id:S.session.user.id, race_id:r.id, h:entry.h, m:entry.m, updated_at:new Date().toISOString()};
       const {error}=await sb.from("picks").upsert(row);
@@ -505,23 +511,23 @@ function raceCard(r){
   }
 
   // Cerrada
-  if(mine && played(mine)) card.append(myPicks(mine, r));
+  if(mine && played(mine,r)) card.append(myPicks(mine, r));
   else card.append(h("p",{class:"note",style:"margin:12px 0 0"},"No hiciste pronóstico en esta carrera."));
   if(done){
-    const R=S.results[r.id];
-    card.append(h("div",{class:"cats"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label+" · podio"),
+    const R=S.results[resKey(r)];
+    card.append(h("div",{class:"cats"}, catsOf(r).map(c=>h("div",{class:"cat"}, h("h3",{},c.label+" · podio"),
       h("ol",{class:"lst"}, R[c.k+"Rows"].filter(x=>x.pos && x.pos<=3).map(x=>h("li",{}, h("span",{class:"tag"},x.pos+"º"), h("span",{class:"nm",text:x.name}),
         h("span",{class:"r"}, `${scaleFor(r.uci_class)[x.pos-1]||0} pts`))))))));
   }
-  const others=S.picks.filter(p=>p.race_id===r.id && played(p));
+  const others=S.picks.filter(p=>p.race_id===r.id && played(p,r));
   if(others.length){
     const rows=others.map(p=>({p, s:pickScore(p,r), name:S.profiles[p.user_id]?.alias||"?"})).sort((a,b)=>b.s.total-a.s.total||new Date(a.p.updated_at||0)-new Date(b.p.updated_at||0)||a.name.localeCompare(b.name));
     card.append(h("details",{open:S.openDetails.has(r.id),ontoggle:e=>{e.currentTarget.open?S.openDetails.add(r.id):S.openDetails.delete(r.id);}},
       h("summary",{},`Pronósticos de todos (${others.length})`),
       h("div",{class:"tablewrap"}, h("table",{},
-        h("thead",{},h("tr",{},h("th",{},"Jugador"),...CATS.map(c=>h("th",{},c.label)),done?h("th",{class:"num"},"Pts"):null)),
+        h("thead",{},h("tr",{},h("th",{},"Jugador"),...catsOf(r).map(c=>h("th",{},c.label)),done?h("th",{class:"num"},"Pts"):null)),
         h("tbody",{}, rows.map(x=>h("tr",{class:x.p.user_id===S.session.user.id?"me":null}, h("td",{text:x.name}),
-          ...CATS.map(c=>h("td",{style:"font-size:13px"}, (x.p[c.k]||[]).flatMap((n,i)=>{ const d=x.s.detail[c.k][i];
+          ...catsOf(r).map(c=>h("td",{style:"font-size:13px"}, (x.p[c.k]||[]).flatMap((n,i)=>{ const d=x.s.detail[c.k][i];
             const t=(n||"—")+(done&&n&&d?.pos?` (${d.pos}º)`:""); const el=h("span",{class:d?.bonus?"hit":null,text:t}); return i?[h("br"),el]:[el]; }))),
           done?h("td",{class:"num pts"},fmtPts(x.s.total)):null)))))));
   }
@@ -532,7 +538,7 @@ function myPicks(p, r){
   const done=hasResult(r.id); const s=pickScore(p,r);
   return h("div",{style:"margin-top:14px"},
     h("div",{class:"race-head"}, h("strong",{},"Tu pronóstico"), done?h("span",{class:"pts"},`${fmtPts(s.total)} pts`):null),
-    h("div",{class:"cats",style:"margin-top:8px"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label),
+    h("div",{class:"cats",style:"margin-top:8px"}, catsOf(r).map(c=>h("div",{class:"cat"}, h("h3",{},c.label),
       h("ul",{class:"lst"}, SLOTS.map((slot,i)=>{ const n=(p[c.k]||[])[i]; const d=s.detail[c.k][i];
         return h("li",{}, h("span",{class:"tag"},i===0?"Ganador":`${i+1}ª elec.`), h("span",{class:"nm "+(d?.bonus?"hit":""),text:n||"—"}),
           done&&n ? h("span",{class:"r"}, d?.pos ? `${d.pos}º · ${fmtPts(d.pts)} pts${d.bonus?" (+10 %)":""}` : "sin puntos") : null); }))))));
@@ -541,7 +547,7 @@ function myPicks(p, r){
 // ---------- Resultados ----------
 // Clasificación de jugadores en una carrera (desempate: quien guardó antes)
 function raceRanking(r){
-  return S.picks.filter(p=>p.race_id===r.id && played(p))
+  return S.picks.filter(p=>p.race_id===r.id && played(p,r))
     .map(p=>({uid:p.user_id, p, s:pickScore(p,r), name:S.profiles[p.user_id]?.alias||"?"}))
     .sort((a,b)=>b.s.total-a.s.total||new Date(a.p.updated_at||0)-new Date(b.p.updated_at||0)||a.name.localeCompare(b.name));
 }
@@ -581,19 +587,19 @@ function renderResultados(box){
     done.map(x=>h("option",{value:x.id,selected:x.id===r.id},x.name)));
   box.append(h("h2",{class:"sec",id:"res-race"},"Clasificación de la carrera"));
   box.append(h("div",{class:"row",style:"margin-top:0"}, sel));
-  const R=S.results[r.id];
+  const R=S.results[resKey(r)];
   const rk=raceRanking(r);
   const card=h("div",{class:"card"},
     h("div",{class:"race-head"}, h("div",{style:"min-width:0"}, h("h3",{class:"race-name"}, r.name, h("span",{class:"cls"},r.uci_class)),
       h("div",{class:"meta"}, `${fmtDay(r.race_date)} · ${rk.length} ${rk.length===1?"jugador":"jugadores"}`))),
-    h("div",{class:"cats"}, CATS.map(c=>h("div",{class:"cat"}, h("h3",{},c.label+" · podio"),
+    h("div",{class:"cats"}, catsOf(r).map(c=>h("div",{class:"cat"}, h("h3",{},c.label+" · podio"),
       h("ol",{class:"lst"}, R[c.k+"Rows"].filter(x=>x.pos && x.pos<=3).map(x=>h("li",{}, h("span",{class:"tag"},x.pos+"º"), h("span",{class:"nm",text:x.name}),
         h("span",{class:"r"}, `${scaleFor(r.uci_class)[x.pos-1]||0} pts`))))))));
   box.append(card);
   if(!rk.length){ box.append(h("div",{class:"card empty"},"Nadie jugó esta carrera.")); return; }
   box.append(h("div",{class:"card",style:"padding:0"}, rk.map((x,i)=>h("div",{class:"pr"+(x.uid===me?" me":"")},
     h("div",{class:"pr-head"}, h("span",{class:"rank"},String(i+1)), h("span",{class:"pr-name",text:x.name}), h("span",{class:"pts"},fmtPts(x.s.total)+" pts")),
-    h("div",{class:"pr-picks"}, CATS.map(c=>h("div",{style:"min-width:0"}, h("div",{class:"tg"},c.k==="h"?"Hombres":"Mujeres"), pickCell(x,c.k))))))));
+    h("div",{class:"pr-picks"}, catsOf(r).map(c=>h("div",{style:"min-width:0"}, h("div",{class:"tg"},c.k==="h"?"Hombres":"Mujeres"), pickCell(x,c.k))))))));
   box.append(h("p",{class:"note",style:"margin:0"},"Junto a cada corredor, su puesto y los puntos que te dio. En verde, ganador acertado con el +10 %. En caso de empate, va delante quien guardó antes su pronóstico."));
 }
 
@@ -687,7 +693,7 @@ function renderAdmin(box){
   // Jugadores
   const players=Object.values(S.profiles).sort((a,b)=>(b.created_at||"").localeCompare(a.created_at||""));
   const doneIds=new Set(S.races.filter(r=>r.active && hasResult(r.id)).map(r=>r.id));
-  const nPlayed=uid=>S.picks.filter(p=>p.user_id===uid && doneIds.has(p.race_id) && played(p)).length;
+  const nPlayed=uid=>S.picks.filter(p=>p.user_id===uid && doneIds.has(p.race_id) && played(p,raceById(p.race_id))).length;
   const fmtAlta=iso=>iso?new Date(iso).toLocaleDateString("es-ES",{day:"numeric",month:"short",year:"numeric"}):"";
   const pl=h("div",{class:"card"},
     h("div",{class:"race-head"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Jugadores"), h("span",{class:"pts"},String(players.length))),
@@ -812,7 +818,7 @@ async function syncCalendar(){
       const ex=known.get(rid);
       if(!ex){ if(date>=today){ const n=r[inn]||rid, s=r[is]||"";
         inserts.push({id:rid,name:n,series:s,race_date:date,uci_class:s==="Copa del Mundo"?"CDM":/europa/i.test(n)?"CE":/campeonato del mundo/i.test(n)?"CM":"C1"}); } }
-      else if(ex.race_date!==date || ex.name!==(r[inn]||ex.name)) updates.push({id:rid, name:r[inn]||ex.name, race_date:date});
+      else if((!ex.cats || ex.cats==="hm") && (ex.race_date!==date || ex.name!==(r[inn]||ex.name))) updates.push({id:rid, name:r[inn]||ex.name, race_date:date});
     }
     if(inserts.length){ const {error}=await sb.from("races").insert(inserts); if(error) throw error; }
     for(const u of updates){ const {error}=await sb.from("races").update({name:u.name, race_date:u.race_date}).eq("id",u.id); if(error) throw error; }
