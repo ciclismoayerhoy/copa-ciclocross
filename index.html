@@ -903,10 +903,13 @@ const GAME_NAME = { cx:"Copa Ciclocross", ruta:"Copa en Ruta", fem:"Copa Femenin
 const GAME_SUB = { cx:"Elige ganador, 2ª y 3ª elección en élite masculina y femenina.",
   ruta:"Ciclismo en ruta masculino: elige ganador, 2ª y 3ª elección en cada carrera y etapa.",
   fem:"Ciclismo en ruta femenino: elige ganadora, 2ª y 3ª elección en cada carrera y etapa." };
-const R_CLASSES = ["WT","GV","Pro"];
-const R_CLASS_LABEL = { WT:"WT · un día o etapa", GV:"GV · etapa de Gran Vuelta", Pro:"Pro" };
+const R_CLASSES = ["TOUR","GV","MON","MUN","WT","EUR","Pro","ETOUR","EGV","EWT","EPro"];
+const R_CLASS_LABEL = {
+  TOUR:"TOUR · general del Tour de Francia", GV:"GV · general del Giro y la Vuelta", MON:"MON · Monumentos", MUN:"MUN · Campeonato del Mundo",
+  WT:"WT · carrera de un día o general WT", EUR:"EUR · Campeonato de Europa", Pro:"Pro · carrera de un día o general ProSeries",
+  ETOUR:"ETOUR · etapa del Tour", EGV:"EGV · etapa del Giro y la Vuelta", EWT:"EWT · etapa WT", EPro:"EPro · etapa ProSeries" };
 const GTOURS = [["giro","Giro"],["tour","Tour"],["vuelta","Vuelta"]];
-const R_RULES = "Cada corredor que eliges suma los puntos de la posición en la que acaba, según la escala de la carrera (WT, etapa de Gran Vuelta o Pro). " +
+const R_RULES = "Cada corredor que eliges suma los puntos de la posición en la que acaba, según la escala de la carrera (más puntos en las Grandes Vueltas, los Monumentos y el Mundial). " +
   "Si tu elección de ganador gana, sus puntos llevan un +10 %. En las cronos por equipos eliges equipos. " +
   "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. En caso de empate, va delante quien guardó antes su pronóstico. " +
   "Para entrar en la clasificación de % de aciertos hay que haber jugado al menos la mitad de las carreras disputadas.";
@@ -1216,9 +1219,12 @@ async function rSync(){
       const name=raceName+(isNaN(stage)?"":` · Etapa ${stage}`);
       const ex=known.get(id);
       if(!ex){ if(date<today) continue;
-        const gt=rGrandTour(raceName);
-        inserts.push({id, game, race_id:raceId||id, race_name:raceName, name, stage_no:isNaN(stage)?null:stage, race_date:date,
-          kind:/equipo/i.test(tipo||"")?"ttt":"normal", category:"WT", class:gt?"GV":"WT", grand_tour:gt, deadline:rDefaultDeadline(date), active:false}); }
+        const gt=rGrandTour(raceName), isStage=!isNaN(stage);
+        // Clase por defecto (se puede cambiar en Organizar): general o etapa de Gran Vuelta, etapa WT o carrera WT.
+        // Monumentos, Mundial, Europeo y ProSeries se marcan a mano.
+        const cls = gt ? (isStage ? (gt==="tour"?"ETOUR":"EGV") : (gt==="tour"?"TOUR":"GV")) : (isStage ? "EWT" : "WT");
+        inserts.push({id, game, race_id:raceId||id, race_name:raceName, name, stage_no:isStage?stage:null, race_date:date,
+          kind:/equipo/i.test(tipo||"")?"ttt":"normal", category:"WT", class:cls, grand_tour:gt, deadline:rDefaultDeadline(date), active:false}); }
       else if(ex.race_date!==date || ex.name!==name) updates.push({id, name, race_date:date});
     }
     for(let i=0;i<inserts.length;i+=200){ const {error}=await sb.from("ruta_eventos").insert(inserts.slice(i,i+200)); if(error) throw error; }
