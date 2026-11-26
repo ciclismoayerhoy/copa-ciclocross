@@ -130,6 +130,7 @@ h2.sec{font-size:13px;margin:6px 0 0;text-transform:uppercase;letter-spacing:.08
       </div>
       <div class="userbox" id="userbox"></div>
     </div>
+    <div id="gamesel"></div>
   </header>
 
   <main id="app"><div class="empty">Cargando…</div></main>
@@ -148,7 +149,7 @@ const SUPABASE_URL = "https://qvmdetlprlnfjqshwsou.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_Qmj-8kEz7SroCVmXyI61VQ_-JT241lH";
 
 // Tu Excel de Google Drive (debe estar compartido: cualquiera con el enlace puede ver)
-const SHEET_ID = "1-Y2Gc2UGvUT-5t3-DIV-jiSEJ0H-UxmMu9y8PTlBM28";
+const SHEET_ID = "1LxXCggar69mYiqxftE3wmdG_c56Ta70T6N9NBjga6W8";  // SHEET_ID_CX: Sheet "Copa Ciclocross · Juego" (solo lectura)
 const TABS = { carreras: "Carreras", corredores: ["Juego", "Corredores"],   // corredores que se pueden elegir (la primera que exista)
   h: ["Histórico 26-27 M", "Resultados_H"],   // élite masculina (se usa la primera que exista)
   m: ["Histórico 26-27 F", "Resultados_M"] };  // élite femenina
@@ -165,10 +166,11 @@ const raceById = id => S.races.find(x=>x.id===id);
 const SLOTS = ["Ganador","2ª elección","3ª elección"];
 const CLASSES = ["CDM","CM","CE","C1","C2"];
 
-document.getElementById("rules").textContent =
+const CX_RULES =
   "Cada corredor que eliges suma los puntos UCI de la posición en la que acaba. Si tu elección de ganador gana, sus puntos llevan un +10 %. " +
   "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. En caso de empate, va delante quien guardó antes su pronóstico. " +
   "Para entrar en la clasificación de % de ganadores hay que haber jugado al menos la mitad de las carreras disputadas.";
+document.getElementById("rules").textContent = CX_RULES;
 
 const configured = !SUPABASE_URL.startsWith("PEGA");
 const sb = configured ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
@@ -343,6 +345,7 @@ function paint(){
   for(const [id,list] of [["dl-h",S.riders.h],["dl-m",S.riders.m]]) document.getElementById(id).replaceChildren(...list.map(n=>h("option",{value:n})));
   const app=document.getElementById("app"); app.replaceChildren();
   const ub=document.getElementById("userbox"); ub.replaceChildren();
+  rPaintHeader();
   if(!configured){ app.append(h("div",{class:"banner"},"Falta configurar la conexión con Supabase. Sigue los pasos del archivo README.")); return; }
   if(!S.session){ app.append(authView()); return; }
   if(!S.loaded){ app.append(h("div",{class:"empty"},"Cargando carreras y resultados…")); return; }
@@ -356,8 +359,9 @@ function paint(){
   if(S.profile?.is_admin) tabs.push(["admin", (S.requests||[]).length ? `Organizar (${S.requests.length})` : "Organizar"]);
   if(!tabs.some(t=>t[0]===S.tab)) S.tab="carreras";
   app.append(h("nav",{role:"tablist"}, tabs.map(([k,l])=>h("button",{role:"tab","aria-selected":String(S.tab===k),onclick:()=>{S.tab=k;try{localStorage.setItem("cc-tab",k);}catch(e){} render();}},l))));
-  if(S.sheetErrors.length && S.profile?.is_admin) app.append(h("div",{class:"banner",style:"margin-bottom:14px"}, S.sheetErrors.map(e=>h("div",{class:"note err",text:e}))));
+  if(S.game==="cx" && S.sheetErrors.length && S.profile?.is_admin) app.append(h("div",{class:"banner",style:"margin-bottom:14px"}, S.sheetErrors.map(e=>h("div",{class:"note err",text:e}))));
   const sec=h("section",{class:"stack"}); app.append(sec);
+  if(S.game!=="cx"){ rPaintSection(sec); return; }
   if(S.tab==="carreras") renderRaces(sec);
   if(S.tab==="resultados") renderResultados(sec);
   if(S.tab==="clasif") renderClasif(sec);
@@ -887,13 +891,451 @@ document.addEventListener("keydown",e=>{
 });
 window.addEventListener("resize",()=>{ if(AC.el && AC.input && document.activeElement===AC.input) acOpen(AC.input); });
 
+// =====================================================================
+// COPA EN RUTA y COPA FEMENINA (mismas cuentas que el ciclocross)
+// Todo el módulo vive aquí; el ciclocross no usa nada de lo que hay debajo.
+// =====================================================================
+const R_SHEET = "1t0qWnCehs41ZXvu2yxHQdcwnztgs5Qp9A2pQwlJGe7E";   // Sheet "Copa en Ruta · Juego" (solo lectura; se rellena desde el Sheet de trabajo)
+const R_TABS = { etapas:"Etapas", startlist:"Startlist", juego:"Juego" };
+const GAMES = [["cx","Ciclocross"],["ruta","Copa en Ruta"],["fem","Copa Femenina"]];
+const GAME_NAME = { cx:"Copa Ciclocross", ruta:"Copa en Ruta", fem:"Copa Femenina" };
+const GAME_SUB = { cx:"Elige ganador, 2ª y 3ª elección en élite masculina y femenina.",
+  ruta:"Ciclismo en ruta masculino: elige ganador, 2ª y 3ª elección en cada carrera y etapa.",
+  fem:"Ciclismo en ruta femenino: elige ganadora, 2ª y 3ª elección en cada carrera y etapa." };
+const R_CLASSES = ["WT","GV","Pro"];
+const R_CLASS_LABEL = { WT:"WT · un día o etapa", GV:"GV · etapa de Gran Vuelta", Pro:"Pro" };
+const GTOURS = [["giro","Giro"],["tour","Tour"],["vuelta","Vuelta"]];
+const R_RULES = "Cada corredor que eliges suma los puntos de la posición en la que acaba, según la escala de la carrera (WT, etapa de Gran Vuelta o Pro). " +
+  "Si tu elección de ganador gana, sus puntos llevan un +10 %. En las cronos por equipos eliges equipos. " +
+  "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. En caso de empate, va delante quien guardó antes su pronóstico. " +
+  "Para entrar en la clasificación de % de aciertos hay que haber jugado al menos la mitad de las carreras disputadas.";
+
+Object.assign(S, { game:"cx", rEv:[], rPicks:[], rTeams:[], rScales:{}, rRes:{}, rStart:{}, rStartLoading:new Set(),
+  rLoaded:false, rErr:[], rclasif:"copa", rgt:"giro", rResEv:null, rAdmRace:null });
+try{ const g=localStorage.getItem("cc-game"); if(GAMES.some(x=>x[0]===g)) S.game=g; }catch(e){}
+
+// ---------- lectura del Sheet de ruta (consulta opcional con tq) ----------
+function readSheet(sheetId, tab, tq){
+  return new Promise((resolve,reject)=>{
+    const cb="__gviz"+(++jsonpN);
+    const s=document.createElement("script");
+    const timer=setTimeout(()=>{ cleanup(); reject(new Error("timeout")); },20000);
+    function cleanup(){ clearTimeout(timer); delete window[cb]; s.remove(); }
+    window[cb]=resp=>{ cleanup();
+      if(resp.status==="error"){ reject(new Error(resp.errors?.[0]?.detailed_message||"error")); return; }
+      const cols=resp.table.cols.map(c=>(c.label||"").trim());
+      const rows=resp.table.rows.map(r=>(r.c||[]).map(c=>{ if(!c) return "";
+        const isDate=typeof c.v==="string" && c.v.startsWith("Date(");
+        const v=(isDate || (c.f!=null && typeof c.v!=="string"))?c.f:c.v; return v==null?"":String(v).trim(); }));
+      resolve({cols, rows});
+    };
+    s.src=`https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:json;responseHandler:${cb}&headers=1&sheet=${encodeURIComponent(tab)}${tq?"&tq="+encodeURIComponent(tq):""}&_=${Date.now()}`;
+    s.onerror=()=>{ cleanup(); reject(new Error("network")); };
+    document.head.append(s);
+  });
+}
+
+// ---------- carga de datos ----------
+async function loadRutaDb(){
+  const [ev,pk,tm,st]=await Promise.all([
+    sb.from("ruta_eventos").select("*").order("race_date"),
+    sb.from("ruta_picks").select("*"),
+    sb.from("ruta_equipos").select("*").order("name"),
+    sb.from("settings").select("*").eq("key","ruta_scales").maybeSingle()
+  ]);
+  const err=ev.error||pk.error||tm.error; if(err) throw err;
+  S.rEv=ev.data; S.rPicks=pk.data; S.rTeams=tm.data; S.rScales=st.data?.value||{};
+}
+async function loadRutaSheet(){
+  S.rRes={};
+  const t=await readSheet(R_SHEET, R_TABS.juego);
+  const ie=colIdx(t.cols,/^id|evento|etapa/i,0), ip=colIdx(t.cols,/^posici/i,1), iw=colIdx(t.cols,/corredor|equipo|nombre/i,2);
+  for(const r of t.rows){
+    const id=r[ie]; if(!id) continue;
+    const pos=parseInt(r[ip],10), name=r[iw]; if(isNaN(pos)||!name) continue;
+    const R=S.rRes[id] ||= {map:new Map(), rows:[]};
+    R.rows.push({pos,name}); if(!R.map.has(norm(name))) R.map.set(norm(name),pos);
+  }
+  for(const R of Object.values(S.rRes)) R.rows.sort((a,b)=>a.pos-b.pos);
+}
+async function rRefresh(){
+  S.rErr=[];
+  try{ await loadRutaDb(); }
+  catch(e){ console.error(e); S.rErr.push(/relation|does not exist|schema cache/i.test(e.message||"") ? "Faltan las tablas de ruta en Supabase (hay que ejecutar ruta_tablas.sql)." : "Error al cargar los datos de ruta: "+(e.message||e)); }
+  try{ await loadRutaSheet(); }
+  catch(e){ S.rErr.push(`No he podido leer la pestaña "${R_TABS.juego}" del Excel de ruta (¿está compartido con enlace?).`); }
+  S.rLoaded=true; render();
+}
+async function rLoadStart(raceId){
+  if(S.rStart[raceId]!==undefined || S.rStartLoading.has(raceId)) return;
+  S.rStartLoading.add(raceId);
+  try{
+    const t=await readSheet(R_SHEET, R_TABS.startlist, `select C where A = '${String(raceId).replace(/'/g,"")}'`);
+    S.rStart[raceId]=[...new Set(t.rows.map(r=>r[0]).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  }catch(e){ S.rStart[raceId]=[]; S.rErr.push(`No he podido leer la startlist de ${raceId}.`); }
+  S.rStartLoading.delete(raceId); render();
+}
+function setGame(g){
+  S.game=g; try{ localStorage.setItem("cc-game",g); }catch(e){}
+  if(g!=="cx" && !S.rLoaded && S.session) rRefresh(); else render();
+}
+
+// ---------- utilidades de ruta ----------
+const rEvents = () => S.rEv.filter(e=>e.game===S.game);
+const rKey = e => e.sheet_id || e.id;
+const rHas = e => { const R=S.rRes[rKey(e)]; return !!R && R.map.size>0; };
+const rOpen = e => e.active && e.deadline && Date.now()<new Date(e.deadline).getTime();
+const rScale = e => S.rScales[e.class] || [];
+const rPlayed = p => !!p && (p.picks||[]).some(x=>norm(x));
+const rPick = (uid,eid) => S.rPicks.find(p=>p.user_id===uid && p.event_id===eid) || null;
+const rSafe = s => String(s).replace(/[^\w-]/g,"_");
+function rScore(p, e){
+  const R=S.rRes[rKey(e)]; let total=0; const detail=[];
+  (p.picks||[]).forEach((name,i)=>{
+    const pos=(R&&name)?R.map.get(norm(name)):null; const base=pos?(rScale(e)[pos-1]||0):0;
+    const bonus=(i===0&&pos===1)?base*WINNER_BONUS:0; total+=base+bonus;
+    detail[i]={name,pos:pos||null,pts:round1(base+bonus),bonus:bonus>0};
+  });
+  return {total:round1(total), detail};
+}
+function rRanking(e){
+  return S.rPicks.filter(p=>p.event_id===e.id && rPlayed(p)).map(p=>({uid:p.user_id, name:S.profiles[p.user_id]?.alias||"?", s:rScore(p,e), t:new Date(p.updated_at||0).getTime(), p}))
+    .sort((a,b)=>b.s.total-a.s.total||a.t-b.t||a.name.localeCompare(b.name));
+}
+function rStandings(filter=()=>true){
+  const done=rEvents().filter(e=>e.active && rHas(e) && filter(e));
+  const minRaces=Math.ceil(done.length/2);
+  const last=[...done].sort((a,b)=>(b.race_date||"").localeCompare(a.race_date||"")||(b.deadline||"").localeCompare(a.deadline||""))[0];
+  const rows=Object.values(S.profiles).map(pr=>{
+    let pts=0,n=0,hit=0,att=0;
+    for(const e of done){
+      const p=rPick(pr.id,e.id); if(!rPlayed(p)) continue;
+      n++; pts+=rScore(p,e).total;
+      const g=(p.picks||[])[0]; if(g){ att++; if(S.rRes[rKey(e)].map.get(norm(g))===1) hit++; }
+    }
+    const lp=last?rPick(pr.id,last.id):null;
+    const tie=(rPlayed(lp)&&lp.updated_at)?new Date(lp.updated_at).getTime():Infinity;
+    return {uid:pr.id, name:pr.alias, pts:round1(pts), n, hit, att, pct:att?hit/att:0, tie};
+  });
+  return {done, minRaces, rows};
+}
+const rChips = e => [
+  h("span",{class:"cls"},e.class), e.kind==="ttt"?h("span",{class:"cls"},"CRONO EQUIPOS"):null, e.category==="Pro"?h("span",{class:"cls"},"PRO"):null];
+const rMeta = e => [e.race_date?fmtDay(e.race_date):null, e.deadline?(rOpen(e)?"Cierra ":"Cerró ")+fmtDT(e.deadline):null].filter(Boolean).join(" · ");
+
+// ---------- pestaña Carreras ----------
+function rRaces(box){
+  const evs=rEvents().filter(e=>e.active);
+  if(!evs.length){ box.append(h("div",{class:"card empty"},"Todavía no hay carreras abiertas en este juego.")); return; }
+  const upcoming=evs.filter(e=>!rHas(e)).sort((a,b)=>(a.deadline||"").localeCompare(b.deadline||""));
+  const past=evs.filter(e=>rHas(e)).sort((a,b)=>b.race_date.localeCompare(a.race_date)||(b.stage_no||0)-(a.stage_no||0));
+  const open=upcoming.filter(rOpen), pending=upcoming.filter(e=>!rOpen(e));
+  if(pending.length){ box.append(h("h2",{class:"sec"},"Cerradas, esperando resultado")); pending.forEach(e=>box.append(rCard(e))); }
+  if(open.length){
+    box.append(h("h2",{class:"sec"},"Abiertas"));
+    open.slice(0,4).forEach(e=>box.append(rCard(e)));
+    if(open.length>4) box.append(h("details",{open:S.openDetails.has("__rmore"),ontoggle:ev=>{ev.currentTarget.open?S.openDetails.add("__rmore"):S.openDetails.delete("__rmore");}},
+      h("summary",{},`Ver las ${open.length-4} siguientes`), h("div",{class:"stack",style:"margin-top:12px"}, open.slice(4).map(rCard))));
+  }
+  if(past.length){ box.append(h("h2",{class:"sec"},"Disputadas")); past.slice(0,20).forEach(e=>box.append(rCard(e)));
+    if(past.length>20) box.append(h("p",{class:"note"},`Hay ${past.length-20} más; están en Resultados.`)); }
+}
+
+function rCard(e){
+  const open=rOpen(e), done=rHas(e);
+  const chip = done ? h("span",{class:"chip done"},"Resultado") : open ? h("span",{class:"chip open"},"Abierta") : h("span",{class:"chip closed"},"Cerrada");
+  const card=h("article",{class:"card"},
+    h("div",{class:"race-head"}, h("div",{style:"min-width:0"}, h("h3",{class:"race-name"}, e.name, rChips(e)), h("div",{class:"meta"},rMeta(e))), chip));
+  const me=S.session.user.id, mine=rPick(me,e.id), ttt=e.kind==="ttt";
+  const what=ttt?"equipo":"corredor";
+
+  if(open){
+    const key="e_"+rSafe(e.id);
+    let list=ttt ? S.rTeams.filter(t=>t.game===e.game && t.active).map(t=>t.name) : S.rStart[e.race_id];
+    if(!ttt && list===undefined) rLoadStart(e.race_id);
+    if(list===undefined){ card.append(h("p",{class:"note",style:"margin:12px 0 0"},"Cargando la lista de corredores…")); return card; }
+    if(!list.length){ card.append(h("p",{class:"note",style:"margin:12px 0 0"}, ttt?"Los equipos se abrirán dos días antes de la crono.":"La lista de corredores se publica antes de la salida.")); return card; }
+    S.riders[key]=list; S.riderSet[key]=new Set(list.map(norm));
+    const ids=[];
+    card.append(h("div",{class:"cats"}, h("div",{class:"cat"}, h("h3",{},ttt?"Equipos":(e.game==="fem"?"Élite femenina":"Élite masculina")),
+      SLOTS.map((slot,i)=>{ const id=`p-${rSafe(e.id)}-${i}`; ids[i]=id;
+        return h("div",{class:"pos"}, h("label",{for:id,class:i===0?"win":null},slot),
+          h("input",{type:"text",id,"data-cat":key,autocomplete:"off",autocapitalize:"off",spellcheck:"false",role:"combobox","aria-autocomplete":"list","aria-expanded":"false",placeholder:ttt?"Escribe y elige un equipo":"Escribe y elige",value:(mine?.picks||[])[i]||""})); }))));
+    const msg=h("span",{class:"note"}, mine ? `Guardado ${fmtDT(mine.updated_at)}` : "Sin pronóstico todavía");
+    const btn=h("button",{class:"btn",onclick:async()=>{
+      msg.className="note err";
+      if(!rOpen(e)){ msg.textContent="Esta carrera ya está cerrada."; render(); return; }
+      const vals=SLOTS.map((_,i)=>document.getElementById(ids[i]).value.trim());
+      for(const v of vals) if(v && !S.riderSet[key].has(norm(v))){ msg.textContent=`"${v}" no está en la lista. Elígelo de las sugerencias.`; return; }
+      const filled=vals.filter(Boolean).map(norm);
+      if(new Set(filled).size!==filled.length){ msg.textContent=`Has repetido un ${what}.`; return; }
+      if(!filled.length){ msg.textContent="Rellena al menos una elección."; return; }
+      const picks=vals.map(v=>v ? (S.riders[key].find(n=>norm(n)===norm(v))||v) : "");
+      btn.disabled=true; msg.className="note"; msg.textContent="Guardando…";
+      const row={user_id:me, event_id:e.id, picks, updated_at:new Date().toISOString()};
+      const {error}=await sb.from("ruta_picks").upsert(row);
+      btn.disabled=false;
+      if(error){ msg.className="note err"; msg.textContent = /row-level/i.test(error.message) ? "La carrera ya ha cerrado; no se ha guardado." : "No se pudo guardar. Inténtalo de nuevo."; return; }
+      S.rPicks=S.rPicks.filter(p=>!(p.user_id===me && p.event_id===e.id)).concat(row);
+      clearDirty(`p-${rSafe(e.id)}`);
+      msg.className="note ok"; msg.textContent="Guardado. Puedes cambiarlo hasta el cierre.";
+    }}, mine?"Actualizar pronóstico":"Guardar pronóstico");
+    card.append(h("div",{class:"row"}, btn, msg));
+    return card;
+  }
+
+  // Cerrada
+  if(mine && rPlayed(mine)) card.append(rMyPicks(mine,e));
+  else card.append(h("p",{class:"note",style:"margin:12px 0 0"},"No hiciste pronóstico en esta carrera."));
+  if(done){
+    const R=S.rRes[rKey(e)];
+    card.append(h("div",{class:"cats"}, h("div",{class:"cat"}, h("h3",{},"Podio"),
+      h("ol",{class:"lst"}, R.rows.filter(x=>x.pos<=3).map(x=>h("li",{}, h("span",{class:"tag"},x.pos+"º"), h("span",{class:"nm",text:x.name}), h("span",{class:"r"},`${rScale(e)[x.pos-1]||0} pts`)))))));
+  }
+  const rk=rRanking(e);
+  if(rk.length) card.append(h("details",{open:S.openDetails.has(e.id),ontoggle:ev=>{ev.currentTarget.open?S.openDetails.add(e.id):S.openDetails.delete(e.id);}},
+    h("summary",{},`Pronósticos de todos (${rk.length})`),
+    h("div",{class:"tablewrap"}, h("table",{},
+      h("thead",{},h("tr",{},h("th",{},"Jugador"),h("th",{},ttt?"Equipos":"Elecciones"),done?h("th",{class:"num"},"Pts"):null)),
+      h("tbody",{}, rk.map(x=>h("tr",{class:x.uid===me?"me":null}, h("td",{text:x.name}),
+        h("td",{style:"font-size:13px"}, (x.p.picks||[]).flatMap((n,i)=>{ const d=x.s.detail[i];
+          const el=h("span",{class:d?.bonus?"hit":null,text:(n||"—")+(done&&n&&d?.pos?` (${d.pos}º)`:"")}); return i?[h("br"),el]:[el]; })),
+        done?h("td",{class:"num pts"},fmtPts(x.s.total)):null)))))));
+  return card;
+}
+function rMyPicks(p,e){
+  const done=rHas(e), s=rScore(p,e);
+  return h("div",{style:"margin-top:14px"},
+    h("div",{class:"race-head"}, h("strong",{},"Tu pronóstico"), done?h("span",{class:"pts"},`${fmtPts(s.total)} pts`):null),
+    h("div",{class:"cats",style:"margin-top:8px"}, h("div",{class:"cat"}, h("ul",{class:"lst"}, SLOTS.map((slot,i)=>{ const n=(p.picks||[])[i], d=s.detail[i];
+      return h("li",{}, h("span",{class:"tag"},i===0?"Ganador":`${i+1}ª elec.`), h("span",{class:"nm "+(d?.bonus?"hit":""),text:n||"—"}),
+        done&&n ? h("span",{class:"r"}, d?.pos?`${d.pos}º · ${fmtPts(d.pts)} pts${d.bonus?" (+10 %)":""}`:"sin puntos") : null); })))));
+}
+
+// ---------- pestaña Resultados ----------
+function rResultados(box){
+  const done=rEvents().filter(e=>e.active && rHas(e)).sort((a,b)=>b.race_date.localeCompare(a.race_date)||(b.stage_no||0)-(a.stage_no||0));
+  if(!done.length){ box.append(h("div",{class:"card empty"},"Aquí verás cómo ha ido cada carrera en cuanto haya resultados de la primera.")); return; }
+  if(!done.some(e=>e.id===S.rResEv)) S.rResEv=done[0].id;
+  const me=S.session.user.id;
+  const mine=done.map(e=>{ const rk=rRanking(e); const i=rk.findIndex(x=>x.uid===me); return {e,n:rk.length,pos:i>=0?i+1:null,pts:i>=0?rk[i].s.total:null}; });
+  const playedN=mine.filter(x=>x.pos).length, total=round1(mine.reduce((t,x)=>t+(x.pts||0),0));
+  box.append(h("h2",{class:"sec"},"Tu temporada"));
+  box.append(h("p",{class:"note",style:"margin:0"}, playedN?`${playedN} de ${done.length} jugadas · ${fmtPts(total)} pts. Toca una carrera para ver su clasificación.`:"Todavía no has jugado ninguna carrera disputada."));
+  box.append(h("div",{class:"card tablewrap",style:"padding:4px 8px"}, h("table",{class:"season"},
+    h("thead",{},h("tr",{},h("th",{},"Carrera"),h("th",{class:"num"},"Puesto"),h("th",{class:"num"},"Pts"))),
+    h("tbody",{}, mine.slice(0,40).map(x=>h("tr",{class:x.e.id===S.rResEv?"sel":null,tabindex:"0",
+        onclick:()=>{S.rResEv=x.e.id;render();document.getElementById("res-race")?.scrollIntoView({behavior:"smooth",block:"start"});},
+        onkeydown:ev=>{ if(ev.key==="Enter"){S.rResEv=x.e.id;render();} }},
+      h("td",{}, h("strong",{text:x.e.name}), h("div",{class:"meta",style:"margin:0"}, fmtDay(x.e.race_date))),
+      h("td",{class:"num"}, x.pos?`${x.pos}º de ${x.n}`:"—"),
+      h("td",{class:"num pts"}, x.pos?fmtPts(x.pts):"—")))))));
+  const e=done.find(x=>x.id===S.rResEv), R=S.rRes[rKey(e)], rk=rRanking(e);
+  box.append(h("h2",{class:"sec",id:"res-race"},"Clasificación de la carrera"));
+  box.append(h("div",{class:"row",style:"margin-top:0"}, h("select",{id:"sel-rres","aria-label":"Carrera",style:"width:auto;max-width:100%",onchange:ev=>{S.rResEv=ev.target.value;clearDirty("sel-rres");render();}},
+    done.map(x=>h("option",{value:x.id,selected:x.id===e.id},x.name)))));
+  box.append(h("div",{class:"card"}, h("div",{class:"race-head"}, h("div",{style:"min-width:0"}, h("h3",{class:"race-name"}, e.name, rChips(e)),
+      h("div",{class:"meta"},`${fmtDay(e.race_date)} · ${rk.length} ${rk.length===1?"jugador":"jugadores"}`))),
+    h("div",{class:"cats"}, h("div",{class:"cat"}, h("h3",{},"Podio"),
+      h("ol",{class:"lst"}, R.rows.filter(x=>x.pos<=3).map(x=>h("li",{}, h("span",{class:"tag"},x.pos+"º"), h("span",{class:"nm",text:x.name}), h("span",{class:"r"},`${rScale(e)[x.pos-1]||0} pts`))))))));
+  if(!rk.length){ box.append(h("div",{class:"card empty"},"Nadie jugó esta carrera.")); return; }
+  box.append(h("div",{class:"card",style:"padding:0"}, rk.map((x,i)=>h("div",{class:"pr"+(x.uid===me?" me":"")},
+    h("div",{class:"pr-head"}, h("span",{class:"rank"},String(i+1)), h("span",{class:"pr-name",text:x.name}), h("span",{class:"pts"},fmtPts(x.s.total)+" pts")),
+    h("div",{style:"margin:6px 0 0 38px",class:"pk"}, (x.p.picks||[]).flatMap((n,j)=>{ const d=x.s.detail[j];
+      const el=h("span",{class:d?.bonus?"hit":null,text:(n||"—")+(n&&d?.pos?` (${d.pos}º · ${fmtPts(d.pts)} pts)`:"")}); return j?[h("br"),el]:[el]; }))))));
+  box.append(h("p",{class:"note",style:"margin:0"},"Junto a cada elección, su puesto y los puntos que te dio. En verde, ganador acertado con el +10 %."));
+}
+
+// ---------- pestaña Clasificaciones ----------
+function rClasif(box){
+  const views=[["copa","Puntos"],["pct","% aciertos"],["wins","Carreras ganadas"],["gv","Grandes Vueltas"]];
+  box.append(h("div",{class:"seg",role:"group","aria-label":"Clasificación",style:"flex-wrap:wrap"},
+    views.map(([k,l])=>h("button",{"aria-pressed":String(S.rclasif===k),onclick:()=>{S.rclasif=k;render();}},l))));
+  const all=rStandings();
+  if(!all.done.length){ box.append(h("div",{class:"card empty"},"La clasificación aparecerá con los resultados de la primera carrera.")); return; }
+  if(S.rclasif==="copa"){ box.append(countLine(all.done.length), ptsTable(all.rows)); return; }
+  if(S.rclasif==="pct"){ box.append(countLine(all.done.length), ...pctTables(all.rows, all.minRaces, "")); return; }
+  if(S.rclasif==="wins"){
+    const med={}, winners=[];
+    for(const e of [...all.done].sort((a,b)=>b.race_date.localeCompare(a.race_date)||(b.stage_no||0)-(a.stage_no||0))){
+      const rk=rRanking(e);
+      rk.slice(0,3).forEach((x,i)=>{ const m=med[x.uid] ||= {uid:x.uid,name:x.name,g:0,s:0,b:0}; if(i===0) m.g++; else if(i===1) m.s++; else m.b++; });
+      if(rk.length) winners.push({e,x:rk[0]});
+    }
+    const list=Object.values(med).sort((a,b)=>b.g-a.g||b.s-a.s||b.b-a.b||a.name.localeCompare(b.name));
+    box.append(countLine(all.done.length));
+    box.append(h("p",{class:"note",style:"margin:0"},"Gana la carrera (o etapa) quien más puntos suma en ella. Se ordena por victorias; en caso de empate, por segundos y luego por terceros puestos."));
+    let rank=0, prev="";
+    box.append(list.length ? h("div",{class:"card tablewrap",style:"padding:4px 8px"}, h("table",{},
+      h("thead",{},h("tr",{},h("th",{},""),h("th",{},"Jugador"),h("th",{class:"num"},"🥇"),h("th",{class:"num"},"🥈"),h("th",{class:"num"},"🥉"))),
+      h("tbody",{}, list.map((x,i)=>{ const k=`${x.g}|${x.s}|${x.b}`; if(k!==prev) rank=i+1; prev=k;
+        return h("tr",{class:x.uid===S.session.user.id?"me":null}, h("td",{class:"rank"},String(rank)), h("td",{text:x.name}),
+          h("td",{class:"num",style:"font-weight:700"},String(x.g)), h("td",{class:"num"},String(x.s)), h("td",{class:"num"},String(x.b))); }))))
+      : h("div",{class:"card empty"},"Nadie en esta clasificación todavía."));
+    if(winners.length){ box.append(h("h2",{class:"sec"},"Ganador de cada carrera"));
+      box.append(h("div",{class:"card",style:"padding:4px 14px"}, h("ul",{class:"lst"}, winners.slice(0,40).map(w=>h("li",{style:"padding:8px 0;border-bottom:1px solid var(--line)"},
+        h("span",{class:"nm"}, h("strong",{text:w.e.name}), h("div",{class:"meta",style:"margin:0"}, fmtDay(w.e.race_date))),
+        h("span",{style:"text-align:right"}, h("span",{text:w.x.name,style:"font-weight:600"}), h("div",{class:"r"}, fmtPts(w.x.s.total)+" pts"))))))); }
+    return;
+  }
+  // Grandes Vueltas: suma de las etapas de cada vuelta
+  box.append(h("div",{class:"seg",role:"group","aria-label":"Gran Vuelta"},
+    GTOURS.map(([k,l])=>h("button",{"aria-pressed":String(S.rgt===k),onclick:()=>{S.rgt=k;render();}},l))));
+  const gv=rStandings(e=>e.grand_tour===S.rgt);
+  const total=rEvents().filter(e=>e.active && e.grand_tour===S.rgt).length;
+  box.append(h("p",{class:"note",style:"margin:0"}, `Suma de los puntos de las etapas: ${gv.done.length} de ${total} disputadas.`));
+  box.append(gv.done.length ? ptsTable(gv.rows) : h("div",{class:"card empty"},"Aparecerá con la primera etapa de esta Gran Vuelta."));
+}
+
+// ---------- pestaña Organizar (solo organizadores) ----------
+function rDefaultDeadline(date){ // 12:00 de Madrid del día de la carrera
+  const [y,m,d]=date.split("-").map(Number);
+  const guess=Date.UTC(y,m-1,d,12,0);
+  const p=Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"Europe/Madrid",hourCycle:"h23",year:"numeric",month:"numeric",day:"numeric",hour:"numeric",minute:"numeric"}).formatToParts(new Date(guess)).map(x=>[x.type,x.value]));
+  const asMadrid=Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute);
+  return new Date(guess-(asMadrid-guess)).toISOString();
+}
+function rParseDate(s){
+  let x=(s||"").match(/Date\((\d+),\s*(\d+),\s*(\d+)\)/); if(x) return `${x[1]}-${String(+x[2]+1).padStart(2,"0")}-${x[3].padStart(2,"0")}`;
+  x=(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); return x?`${x[3]}-${x[2].padStart(2,"0")}-${x[1].padStart(2,"0")}`:null;
+}
+const rGrandTour = n => /giro d/i.test(n)?"giro":/tour de france|tour de francia/i.test(n)?"tour":/vuelta a espa/i.test(n)?"vuelta":null;
+
+async function rSync(){
+  const m=document.getElementById("rsync-msg"); m.className="note"; m.textContent="Leyendo la pestaña Etapas…";
+  try{
+    const {rows}=await readSheet(R_SHEET, R_TABS.etapas);
+    const today=new Date().toISOString().slice(0,10);
+    const known=new Map(S.rEv.map(e=>[e.id,e]));
+    const inserts=[], updates=[];
+    for(const r of rows){
+      const id=r[0], raceName=r[1], raceId=r[2], copa=r[3], stage=parseInt(r[4],10), date=rParseDate(r[5]), tipo=r[9];
+      if(!id || !date) continue;
+      const game=/femen/i.test(copa)?"fem":/ruta/i.test(copa)?"ruta":null; if(!game) continue;
+      const name=raceName+(isNaN(stage)?"":` · Etapa ${stage}`);
+      const ex=known.get(id);
+      if(!ex){ if(date<today) continue;
+        const gt=rGrandTour(raceName);
+        inserts.push({id, game, race_id:raceId||id, race_name:raceName, name, stage_no:isNaN(stage)?null:stage, race_date:date,
+          kind:/equipo/i.test(tipo||"")?"ttt":"normal", category:"WT", class:gt?"GV":"WT", grand_tour:gt, deadline:rDefaultDeadline(date), active:false}); }
+      else if(ex.race_date!==date || ex.name!==name) updates.push({id, name, race_date:date});
+    }
+    for(let i=0;i<inserts.length;i+=200){ const {error}=await sb.from("ruta_eventos").insert(inserts.slice(i,i+200)); if(error) throw error; }
+    for(const u of updates){ const {error}=await sb.from("ruta_eventos").update({name:u.name,race_date:u.race_date}).eq("id",u.id); if(error) throw error; }
+    m.className="note ok"; m.textContent=`${inserts.length} eventos nuevos (apagados), ${updates.length} actualizados.`+(updates.length?" Revisa el cierre de los que han cambiado de fecha.":"");
+    await loadRutaDb(); render();
+  }catch(e){ m.className="note err"; m.textContent="No se pudo sincronizar: "+(e.message||e); }
+}
+
+function rAdmin(box){
+  const evs=rEvents();
+  // Estado
+  box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Estado · "+GAME_NAME[S.game]),
+    h("p",{class:"note",style:"margin:6px 0 0"}, `${evs.length} eventos en la base de datos, ${evs.filter(e=>e.active).length} en juego. Resultados encontrados en ${evs.filter(rHas).length}.`),
+    S.rErr.length ? h("div",{style:"margin-top:8px"}, S.rErr.map(t=>h("div",{class:"note err",text:t}))) : null,
+    h("div",{class:"row"}, h("button",{class:"btn ghost",onclick:async ev=>{ ev.currentTarget.disabled=true; await rRefresh(); }},"Volver a leer el Excel"),
+      h("button",{class:"btn ghost",onclick:rSync},"Sincronizar calendario (pestaña Etapas)"), h("span",{class:"note",id:"rsync-msg"})),
+    h("p",{class:"note",style:"margin:10px 0 0"},"Jugadores y contraseñas son los mismos que en Ciclocross: se gestionan en Ciclocross > Organizar.")));
+
+  // Eventos
+  const races=[...new Map(evs.map(e=>[e.race_id,e.race_name])).entries()];
+  if(!races.some(x=>x[0]===S.rAdmRace)) S.rAdmRace=races[0]?.[0]||null;
+  const box2=h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Carreras y etapas"),
+    h("p",{class:"note",style:"margin:4px 0 6px"},"Los eventos nuevos entran apagados, con cierre a las 12:00 del día. Elige una carrera, ajusta lo que necesites y pulsa Guardar en la fila."));
+  if(!races.length) box2.append(h("p",{class:"note"},"No hay eventos todavía. Pulsa «Sincronizar calendario» cuando las carreras estén en la pestaña Etapas."));
+  else{
+    const sel=h("select",{id:"sel-radm","aria-label":"Carrera",style:"width:auto;max-width:100%",onchange:ev=>{S.rAdmRace=ev.target.value;clearDirty("sel-radm");render();}},
+      races.map(([id,n])=>h("option",{value:id,selected:id===S.rAdmRace},n)));
+    const list=evs.filter(e=>e.race_id===S.rAdmRace).sort((a,b)=>(a.stage_no||0)-(b.stage_no||0)||a.race_date.localeCompare(b.race_date));
+    const bulkMsg=h("span",{class:"note"});
+    const bulk=async patch=>{ const {error}=await sb.from("ruta_eventos").update(patch).eq("race_id",S.rAdmRace).eq("game",S.game);
+      if(error){ bulkMsg.className="note err"; bulkMsg.textContent="Error"; return; } list.forEach(e=>Object.assign(e,patch)); render(); };
+    box2.append(h("div",{class:"row",style:"margin-top:0"}, sel,
+      h("button",{class:"btn ghost small",onclick:()=>bulk({active:true})},"Poner todo en juego"),
+      h("button",{class:"btn ghost small",onclick:()=>bulk({active:false})},"Apagar todo"), bulkMsg));
+    list.forEach(e=>{
+      const id=rSafe(e.id);
+      const dt=h("input",{type:"datetime-local",id:`rdl-${id}`,value:toLocalInput(e.deadline),"aria-label":`Cierre ${e.name}`});
+      const cl=h("select",{id:`rcl-${id}`,"aria-label":`Clase ${e.name}`}, R_CLASSES.map(c=>h("option",{value:c,selected:c===e.class},c)));
+      const kd=h("select",{id:`rkd-${id}`,"aria-label":`Tipo ${e.name}`}, [["normal","Normal"],["ttt","Crono por equipos"]].map(([v,l])=>h("option",{value:v,selected:v===e.kind},l)));
+      const ct=h("select",{id:`rct-${id}`,"aria-label":`Categoría ${e.name}`}, ["WT","Pro"].map(c=>h("option",{value:c,selected:c===e.category},c)));
+      const act=h("input",{type:"checkbox",id:`rac-${id}`,checked:e.active});
+      const m=h("span",{class:"note"});
+      box2.append(h("div",{class:"admrow"},
+        h("div",{class:"nmcol",style:"min-width:0"}, h("strong",{text:e.name}), h("div",{class:"meta"}, fmtDay(e.race_date), rHas(e)?" · con resultado":""),
+          h("div",{class:"row",style:"margin-top:6px;gap:6px"}, h("label",{class:"note",style:"display:inline-flex;gap:6px;align-items:center"}, act, "En juego"), kd, ct)),
+        dt, cl,
+        h("div",{}, h("button",{class:"btn small",onclick:async()=>{
+          const deadline=dt.value?new Date(dt.value).toISOString():null;
+          const patch={deadline, class:cl.value, kind:kd.value, category:ct.value, active:act.checked};
+          const {error}=await sb.from("ruta_eventos").update(patch).eq("id",e.id);
+          if(error){ m.className="note err"; m.textContent="Error"; return; }
+          Object.assign(e,patch); clearDirty(`rdl-${id}`); clearDirty(`rcl-${id}`); clearDirty(`rkd-${id}`); clearDirty(`rct-${id}`);
+          m.className="note ok"; m.textContent="✓"; }},"Guardar"), m)));
+    });
+  }
+  box.append(box2);
+
+  // Equipos (cronos por equipos)
+  const teams=S.rTeams.filter(t=>t.game===S.game);
+  const tmsg=h("span",{class:"note"});
+  const ta=h("textarea",{id:"rteams-new","aria-label":"Equipos nuevos",placeholder:"Un equipo por línea"});
+  const setAll=async v=>{ const {error}=await sb.from("ruta_equipos").update({active:v}).eq("game",S.game);
+    if(error){ tmsg.className="note err"; tmsg.textContent="Error"; return; } teams.forEach(t=>t.active=v); render(); };
+  box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Equipos para las cronos por equipos"),
+    h("p",{class:"note",style:"margin:4px 0 6px"},`${teams.filter(t=>t.active).length} de ${teams.length} activos. Dalos de alta una vez; enciéndelos dos días antes de la crono y apágalos después.`),
+    h("div",{class:"row",style:"margin-top:0"}, h("button",{class:"btn small",onclick:()=>setAll(true)},"Encender todos"), h("button",{class:"btn ghost small",onclick:()=>setAll(false)},"Apagar todos"), tmsg),
+    teams.length ? h("div",{style:"margin-top:8px;display:flex;flex-direction:column;gap:2px"}, teams.map(t=>{
+      const cb=h("input",{type:"checkbox",checked:t.active,onchange:async()=>{ const {error}=await sb.from("ruta_equipos").update({active:cb.checked}).eq("id",t.id);
+        if(error){ cb.checked=!cb.checked; return; } t.active=cb.checked; }});
+      return h("label",{class:"note",style:"display:flex;gap:8px;align-items:center;color:var(--ink)"}, cb, t.name); })) : null,
+    h("details",{style:"margin-top:12px"}, h("summary",{},"Dar de alta equipos"), h("div",{class:"field"}, ta),
+      h("div",{class:"row"}, h("button",{class:"btn",onclick:async()=>{
+        const names=[...new Set(ta.value.split("\n").map(x=>x.trim()).filter(Boolean))].filter(n=>!teams.some(t=>norm(t.name)===norm(n)));
+        if(!names.length){ tmsg.className="note err"; tmsg.textContent="No hay equipos nuevos."; return; }
+        const {error}=await sb.from("ruta_equipos").insert(names.map(name=>({game:S.game,name})));
+        if(error){ tmsg.className="note err"; tmsg.textContent="No se pudo guardar."; return; }
+        clearDirty("rteams-new"); await loadRutaDb(); render(); }},"Añadir")))));
+
+  // Escalas
+  const tas={}, sm=h("span",{class:"note"});
+  box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Puntos por clase"),
+    h("p",{class:"note",style:"margin:4px 0 0"},"Puntos del 1º, 2º, 3º… separados por comas. Las posiciones que no aparecen suman 0. Valen para Copa en Ruta y Copa Femenina."),
+    R_CLASSES.map(c=>{ tas[c]=h("textarea",{id:`rsc-${c}`,"aria-label":`Escala ${c}`}); tas[c].value=(S.rScales[c]||[]).join(", ");
+      return h("div",{class:"field"}, h("label",{for:`rsc-${c}`}, R_CLASS_LABEL[c]), tas[c]); }),
+    h("div",{class:"row"}, h("button",{class:"btn",onclick:async()=>{
+      const value={}; for(const c of R_CLASSES) value[c]=tas[c].value.split(/[,;\s]+/).map(Number).filter(n=>!isNaN(n)&&n>=0);
+      const {error}=await sb.from("settings").upsert({key:"ruta_scales",value});
+      if(error){ sm.className="note err"; sm.textContent="No se pudo guardar."; return; }
+      S.rScales=value; clearDirty("rsc-"); sm.className="note ok"; sm.textContent="Escalas guardadas. Las clasificaciones ya usan los nuevos puntos."; }},"Guardar puntos"), sm)));
+}
+
+// ---------- selector de juego y pintado ----------
+function rPaintHeader(){
+  document.querySelector("h1").textContent=GAME_NAME[S.game];
+  document.querySelector(".sub").textContent=GAME_SUB[S.game];
+  document.title=GAME_NAME[S.game];
+  document.getElementById("rules").textContent = S.game==="cx" ? CX_RULES : R_RULES;
+  const gs=document.getElementById("gamesel"); gs.replaceChildren();
+  if(S.session) gs.append(h("div",{class:"seg",role:"group","aria-label":"Juego",style:"flex-wrap:wrap;margin:14px 0 0"},
+    GAMES.map(([k,l])=>h("button",{"aria-pressed":String(S.game===k),onclick:()=>setGame(k)},l))));
+}
+function rPaintSection(sec){
+  if(!S.rLoaded){ sec.append(h("div",{class:"empty"},"Cargando carreras y resultados…")); return; }
+  if(S.rErr.length && S.tab!=="admin") sec.append(h("div",{class:"banner"}, S.profile?.is_admin ? S.rErr.map(t=>h("div",{class:"note err",text:t})) : h("div",{class:"note"},"Este juego todavía no está listo. Vuelve en unos días.")));
+  if(S.tab==="carreras") rRaces(sec);
+  else if(S.tab==="resultados") rResultados(sec);
+  else if(S.tab==="clasif") rClasif(sec);
+  else if(S.tab==="admin") rAdmin(sec);
+}
+
 // ---------- arranque ----------
 try{ const t=localStorage.getItem("cc-tab"); if(t) S.tab=t; }catch(e){}
 if(configured){
   sb.auth.onAuthStateChange((_ev, session)=>{
     const changed=(S.session?.user?.id)!==(session?.user?.id);
     S.session=session;
-    if(session && changed){ S.loaded=false; render(); refresh(); }
+    if(session && changed){ S.loaded=false; S.rLoaded=false; render(); refresh(); if(S.game!=="cx") rRefresh(); }
     else render();
   });
   // Refresca abierta/cerrada cada minuto (solo pinta, no escribe nada)
