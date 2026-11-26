@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Copa Ciclocross</title>
+<title>Ciclismo ayer y hoy</title>
 <meta name="theme-color" content="#1b201a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -117,6 +117,7 @@ h2.sec{font-size:13px;margin:6px 0 0;text-transform:uppercase;letter-spacing:.08
 .pk div{overflow-wrap:anywhere}
 .season tr.sel td{background:color-mix(in srgb,var(--tape) 12%,transparent)}
 .season tr{cursor:pointer}
+#gamesel .seg button{text-transform:uppercase;font-weight:800;letter-spacing:.04em}
 </style>
 </head>
 <body>
@@ -125,7 +126,7 @@ h2.sec{font-size:13px;margin:6px 0 0;text-transform:uppercase;letter-spacing:.08
     <div class="tape" aria-hidden="true"></div>
     <div class="top">
       <div>
-        <h1>Copa Ciclocross</h1>
+        <h1>Ciclismo ayer y hoy</h1><!-- MARCA -->
         <p class="sub">Elige ganador, 2ª y 3ª elección en élite masculina y femenina.</p>
       </div>
       <div class="userbox" id="userbox"></div>
@@ -1312,9 +1313,8 @@ function rAdmin(box){
 
 // ---------- selector de juego y pintado ----------
 function rPaintHeader(){
-  document.querySelector("h1").textContent=GAME_NAME[S.game];
   document.querySelector(".sub").textContent=GAME_SUB[S.game];
-  document.title=GAME_NAME[S.game];
+  document.title="Ciclismo ayer y hoy";
   document.getElementById("rules").textContent = S.game==="cx" ? CX_RULES : R_RULES;
   const gs=document.getElementById("gamesel"); gs.replaceChildren();
   if(S.session) gs.append(h("div",{class:"seg",role:"group","aria-label":"Juego",style:"flex-wrap:wrap;margin:14px 0 0"},
