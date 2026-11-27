@@ -897,7 +897,7 @@ window.addEventListener("resize",()=>{ if(AC.el && AC.input && document.activeEl
 // Todo el módulo vive aquí; el ciclocross no usa nada de lo que hay debajo.
 // =====================================================================
 const R_SHEET = "1t0qWnCehs41ZXvu2yxHQdcwnztgs5Qp9A2pQwlJGe7E";   // Sheet "Copa en Ruta · Juego" (solo lectura; se rellena desde el Sheet de trabajo)
-const R_TABS = { etapas:"Etapas", startlist:"Startlist", juego:"Juego" };
+const R_TABS = { etapas:"Etapas", startlist:"Startlist", juego:"Juego", corredores:"Corredores" };
 const GAMES = [["cx","Ciclocross"],["ruta","Copa en Ruta"],["fem","Copa Femenina"]];
 const GAME_NAME = { cx:"Copa Ciclocross", ruta:"Copa en Ruta", fem:"Copa Femenina" };
 const GAME_SUB = { cx:"Elige ganador, 2ª y 3ª elección en élite masculina y femenina.",
@@ -914,7 +914,7 @@ const R_RULES = "Cada corredor que eliges suma los puntos de la posición en la 
   "Puedes cambiar tu pronóstico hasta la hora de cierre; cuenta el último guardado. En caso de empate, va delante quien guardó antes su pronóstico. " +
   "Para entrar en la clasificación de % de aciertos hay que haber jugado al menos la mitad de las carreras disputadas.";
 
-Object.assign(S, { game:"cx", rEv:[], rPicks:[], rTeams:[], rScales:{}, rRes:{}, rStart:{}, rStartLoading:new Set(),
+Object.assign(S, { rGen:{ruta:[],fem:[]}, rGenSet:{ruta:new Set(),fem:new Set()}, game:"cx", rEv:[], rPicks:[], rTeams:[], rScales:{}, rRes:{}, rStart:{}, rStartLoading:new Set(),
   rLoaded:false, rErr:[], rclasif:"copa", rgt:"giro", rResEv:null, rAdmRace:null });
 try{ const g=localStorage.getItem("cc-game"); if(GAMES.some(x=>x[0]===g)) S.game=g; }catch(e){}
 
@@ -961,6 +961,23 @@ async function loadRutaSheet(){
     R.rows.push({pos,name}); if(!R.map.has(norm(name))) R.map.set(norm(name),pos);
   }
   for(const R of Object.values(S.rRes)) R.rows.sort((a,b)=>a.pos-b.pos);
+  // Lista genérica de corredores elegibles (pestaña Corredores: Copa, Corredor)
+  try{
+    const c=await readSheet(R_SHEET, R_TABS.corredores);
+    const ic=colIdx(c.cols,/copa/i,0), iw=colIdx(c.cols,/corredor|nombre/i,1);
+    const g={ruta:new Set(), fem:new Set()};
+    for(const r of c.rows){ const n=(r[iw]||"").trim(); if(!n) continue; const cp=r[ic]||""; (/femen/i.test(cp)?g.fem:g.ruta).add(n); }
+    S.rGen={ruta:[...g.ruta].sort((a,b)=>a.localeCompare(b)), fem:[...g.fem].sort((a,b)=>a.localeCompare(b))};
+    S.rGenSet={ruta:new Set(S.rGen.ruta.map(norm)), fem:new Set(S.rGen.fem.map(norm))};
+  }catch(e){ S.rErr.push(`No he podido leer la pestaña "${R_TABS.corredores}" del Excel de ruta.`); }
+}
+// Corredores elegibles de un evento: lista genérica + añadidos de esa carrera (pestaña Startlist)
+const rEligible = e => { const extra=S.rStart[e.race_id]||[]; const m=new Map(); for(const n of [...(S.rGen[e.game]||[]),...extra]) if(!m.has(norm(n))) m.set(norm(n),n); return [...m.values()].sort((a,b)=>a.localeCompare(b)); };
+// Corredores del top 25 del resultado que no están entre los elegibles (aviso en rojo)
+function rMissing(e){
+  const R=S.rRes[rKey(e)]; if(!R || e.kind==="ttt") return [];
+  const ok=new Set([...(S.rGen[e.game]||[]),...(S.rStart[e.race_id]||[])].map(norm));
+  return R.rows.filter(x=>x.pos<=25 && !ok.has(norm(x.name)));
 }
 async function rRefresh(){
   S.rErr=[];
@@ -1055,10 +1072,10 @@ function rCard(e){
 
   if(open){
     const key="e_"+rSafe(e.id);
-    let list=ttt ? S.rTeams.filter(t=>t.game===e.game && t.active).map(t=>t.name) : S.rStart[e.race_id];
+    let list=ttt ? S.rTeams.filter(t=>t.game===e.game && t.active).map(t=>t.name) : (S.rStart[e.race_id]===undefined ? undefined : rEligible(e));
     if(!ttt && list===undefined) rLoadStart(e.race_id);
     if(list===undefined){ card.append(h("p",{class:"note",style:"margin:12px 0 0"},"Cargando la lista de corredores…")); return card; }
-    if(!list.length){ card.append(h("p",{class:"note",style:"margin:12px 0 0"}, ttt?"Los equipos se abrirán dos días antes de la crono.":"La lista de corredores se publica antes de la salida.")); return card; }
+    if(!list.length){ card.append(h("p",{class:"note",style:"margin:12px 0 0"}, ttt?"Los equipos se abrirán dos días antes de la crono.":"Todavía no hay lista de corredores.")); return card; }
     S.riders[key]=list; S.riderSet[key]=new Set(list.map(norm));
     const ids=[];
     card.append(h("div",{class:"cats"}, h("div",{class:"cat"}, h("h3",{},ttt?"Equipos":(e.game==="fem"?"Élite femenina":"Élite masculina")),
@@ -1091,6 +1108,10 @@ function rCard(e){
   // Cerrada
   if(mine && rPlayed(mine)) card.append(rMyPicks(mine,e));
   else card.append(h("p",{class:"note",style:"margin:12px 0 0"},"No hiciste pronóstico en esta carrera."));
+  if(done && S.profile?.is_admin){
+    if(S.rStart[e.race_id]===undefined) rLoadStart(e.race_id);
+    else { const miss=rMissing(e); if(miss.length) card.append(h("p",{class:"note err",style:"margin:10px 0 0"}, "Fuera de la lista de corredores (top 25): "+miss.map(x=>`${x.name} (${x.pos}º)`).join(", "))); }
+  }
   if(done){
     const R=S.rRes[rKey(e)];
     card.append(h("div",{class:"cats"}, h("div",{class:"cat"}, h("h3",{},"Podio"),
@@ -1241,6 +1262,11 @@ function rAdmin(box){
   box.append(h("div",{class:"card"}, h("h3",{class:"race-name",style:"font-size:1.3rem"},"Estado · "+GAME_NAME[S.game]),
     h("p",{class:"note",style:"margin:6px 0 0"}, `${evs.length} eventos en la base de datos, ${evs.filter(e=>e.active).length} en juego. Resultados encontrados en ${evs.filter(rHas).length}.`),
     S.rErr.length ? h("div",{style:"margin-top:8px"}, S.rErr.map(t=>h("div",{class:"note err",text:t}))) : null,
+    h("p",{class:"note",style:"margin:6px 0 0"}, `${(S.rGen[S.game]||[]).length} corredores en la lista genérica.`),
+    (()=>{ const done=evs.filter(rHas); done.forEach(e=>{ if(S.rStart[e.race_id]===undefined) rLoadStart(e.race_id); });
+      const rows=done.filter(e=>S.rStart[e.race_id]!==undefined).map(e=>[e,rMissing(e)]).filter(x=>x[1].length);
+      return rows.length ? h("div",{style:"margin-top:8px"}, h("p",{class:"note err",style:"margin:0"},"Fuera de la lista de corredores (top 25 de resultados; añádelos en Corredores o en Startlist):"),
+        h("ul",{class:"note"}, rows.slice(0,30).map(([e,m])=>h("li",{text:`${e.name}: ${m.map(x=>`${x.name} (${x.pos}º)`).join(", ")}`})))) : null; })(),
     h("div",{class:"row"}, h("button",{class:"btn ghost",onclick:async ev=>{ ev.currentTarget.disabled=true; await rRefresh(); }},"Volver a leer el Excel"),
       h("button",{class:"btn ghost",onclick:rSync},"Sincronizar calendario (pestaña Etapas)"), h("span",{class:"note",id:"rsync-msg"})),
     h("p",{class:"note",style:"margin:10px 0 0"},"Jugadores y contraseñas son los mismos que en Ciclocross: se gestionan en Ciclocross > Organizar.")));
