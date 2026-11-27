@@ -1217,7 +1217,7 @@ async function rSync(){
       if(!id || !date) continue;
       const game=/femen/i.test(copa)?"fem":/ruta/i.test(copa)?"ruta":null; if(!game) continue;
       const isGen=/^general/i.test((r[4]||"").trim());
-      const name=raceName+(isGen?" · General":isNaN(stage)?"":` · Etapa ${stage}`);
+      const name=raceName+(isGen?" - General":isNaN(stage)?"":` · Etapa ${stage}`);
       const ex=known.get(id);
       if(!ex){ if(date<today) continue;
         const gt=rGrandTour(raceName), isStage=!isNaN(stage);
