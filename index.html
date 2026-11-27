@@ -1203,7 +1203,7 @@ function rParseDate(s){
   let x=(s||"").match(/Date\((\d+),\s*(\d+),\s*(\d+)\)/); if(x) return `${x[1]}-${String(+x[2]+1).padStart(2,"0")}-${x[3].padStart(2,"0")}`;
   x=(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/); return x?`${x[3]}-${x[2].padStart(2,"0")}-${x[1].padStart(2,"0")}`:null;
 }
-const rGrandTour = n => /giro d/i.test(n)?"giro":/tour de france|tour de francia/i.test(n)?"tour":/vuelta a espa/i.test(n)?"vuelta":null;
+const rGrandTour = n => /giro d.italia|giro de italia/i.test(n)?"giro":/tour de france|tour de francia/i.test(n)?"tour":/vuelta a espa/i.test(n)?"vuelta":null;
 
 async function rSync(){
   const m=document.getElementById("rsync-msg"); m.className="note"; m.textContent="Leyendo la pestaña Etapas…";
@@ -1216,7 +1216,8 @@ async function rSync(){
       const id=r[0], raceName=r[1], raceId=r[2], copa=r[3], stage=parseInt(r[4],10), date=rParseDate(r[5]), tipo=r[9];
       if(!id || !date) continue;
       const game=/femen/i.test(copa)?"fem":/ruta/i.test(copa)?"ruta":null; if(!game) continue;
-      const name=raceName+(isNaN(stage)?"":` · Etapa ${stage}`);
+      const isGen=/^general/i.test((r[4]||"").trim());
+      const name=raceName+(isGen?" · General":isNaN(stage)?"":` · Etapa ${stage}`);
       const ex=known.get(id);
       if(!ex){ if(date<today) continue;
         const gt=rGrandTour(raceName), isStage=!isNaN(stage);
